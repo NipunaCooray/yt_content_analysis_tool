@@ -84,7 +84,8 @@ st.markdown(
 5. **Screening** — include/exclude/unsure each unique video, with reasons and notes.
 6. **Video coding** — characteristics, information coverage, older-adult needs, presentation.
 7. **Accuracy assessment** — claim-level fact-checking against official sources.
-8. *Dashboard → Export* — later phases.
+8. **Dashboard** — study-wide progress and descriptive charts.
+9. **Export** — all datasets as CSV/JSON, individually or as one ZIP.
     """
 )
 

@@ -10,14 +10,21 @@ not a general-purpose YouTube analytics dashboard.
 
 ## Status
 
-**Phases 1–2 implemented:**
+**All 7 phases implemented** (see the handover doc, section 35, for the phase breakdown):
 
 - Study / reviewer / search-query CRUD, SQLite persistence
-- YouTube API pilot search, relevance rating, per-query performance stats, diagnostics
-- Pilot-run history (never overwritten) and search-strategy approval
+- Pilot search: relevance rating, per-query performance stats, diagnostics, run history, and
+  search-strategy approval
+- Full search: raw-result storage (never overwritten across runs), metadata enrichment, and
+  deduplication into a master video list
+- Screening: include/exclude/unsure decisions with reasons, notes, and filters
+- Video coding: characteristics, information-coverage, older-adult-needs, and presentation
+  coding, gated to included videos
+- Accuracy assessment: claim-level fact-checking against official sources
+- Dashboard: study-wide counters and descriptive charts
+- Export: all 14 required CSV/JSON datasets, individually or as one ZIP
 
-Full search, screening, coding, accuracy assessment, dashboard, and export are scaffolded as
-placeholder pages/services and arrive in later phases (see the handover doc, section 35).
+57 automated tests pass (mocked YouTube API, in-memory DB — see Tests below).
 
 ## Setup
 

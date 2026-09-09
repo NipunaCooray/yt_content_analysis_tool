@@ -81,8 +81,8 @@ if filter_col3.button("▶ Resume last unscreened"):
         st.toast("All videos have been screened.", icon="✅")
 
 st.caption(
-    "Filter by category isn't available yet — transport-mode coding arrives in Phase 5 "
-    "(Video coding)."
+    "There's no transport-mode filter here — that's assigned during Video coding, which "
+    "happens after screening."
 )
 
 filtered = [

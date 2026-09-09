@@ -771,3 +771,59 @@ def set_accuracy_review_complete(
         details={"video_id": video_pk},
     )
     return existing
+
+
+# ---------------------------------------------------------------------------
+# Study-wide lookups for export (Phase 7)
+# ---------------------------------------------------------------------------
+
+
+def list_all_pilot_results_for_study(db: Session, study_id: int) -> list[PilotSearchResult]:
+    stmt = (
+        select(PilotSearchResult)
+        .join(PilotSearchRun, PilotSearchResult.pilot_search_run_id == PilotSearchRun.id)
+        .where(PilotSearchRun.study_id == study_id)
+        .order_by(PilotSearchResult.pilot_search_run_id, PilotSearchResult.query_id)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def list_accuracy_claims_for_study(db: Session, study_id: int) -> list[AccuracyClaim]:
+    stmt = (
+        select(AccuracyClaim)
+        .where(AccuracyClaim.study_id == study_id)
+        .order_by(AccuracyClaim.video_id, AccuracyClaim.created_at)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def list_all_information_domain_codes_for_study(
+    db: Session, study_id: int
+) -> list[InformationDomainCode]:
+    stmt = (
+        select(InformationDomainCode)
+        .join(VideoCoding, InformationDomainCode.video_coding_id == VideoCoding.id)
+        .where(VideoCoding.study_id == study_id)
+        .order_by(InformationDomainCode.video_coding_id, InformationDomainCode.domain_name)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def list_all_older_adult_need_codes_for_study(db: Session, study_id: int) -> list[OlderAdultNeedCode]:
+    stmt = (
+        select(OlderAdultNeedCode)
+        .join(VideoCoding, OlderAdultNeedCode.video_coding_id == VideoCoding.id)
+        .where(VideoCoding.study_id == study_id)
+        .order_by(OlderAdultNeedCode.video_coding_id, OlderAdultNeedCode.need_name)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def list_all_presentation_codes_for_study(db: Session, study_id: int) -> list[PresentationCode]:
+    stmt = (
+        select(PresentationCode)
+        .join(VideoCoding, PresentationCode.video_coding_id == VideoCoding.id)
+        .where(VideoCoding.study_id == study_id)
+        .order_by(PresentationCode.video_coding_id, PresentationCode.item_name)
+    )
+    return list(db.execute(stmt).scalars().all())
