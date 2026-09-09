@@ -5,7 +5,7 @@ import streamlit as st
 from components.navigation import page_header, render_context_sidebar
 from db import crud
 from db.database import get_session
-from services import coding_service, screening_service
+from services import accuracy_service, coding_service, screening_service
 from services.youtube_api import api_key_configured
 
 db = get_session()
@@ -60,6 +60,17 @@ else:
     cols3[2].metric("Coding in progress", coding_progress.in_progress)
     cols3[3].metric("Coding complete", coding_progress.complete)
 
+    review_statuses = crud.list_accuracy_review_statuses(db, current_study.id)
+    claim_counts = crud.count_accuracy_claims(db, current_study.id)
+    accuracy_progress = accuracy_service.compute_progress(
+        [v.id for v in included_videos], review_statuses, claim_counts
+    )
+    cols4 = st.columns(4)
+    cols4[0].metric("Total claims", sum(claim_counts.values()))
+    cols4[1].metric("Accuracy not started", accuracy_progress.not_started)
+    cols4[2].metric("Accuracy in progress", accuracy_progress.in_progress)
+    cols4[3].metric("Accuracy complete", accuracy_progress.complete)
+
     if current_study.description:
         st.write(current_study.description)
 
@@ -72,7 +83,8 @@ st.markdown(
 4. **Full search results** — run the approved strategy at scale, deduplicate into the master video list.
 5. **Screening** — include/exclude/unsure each unique video, with reasons and notes.
 6. **Video coding** — characteristics, information coverage, older-adult needs, presentation.
-7. *Accuracy assessment → Dashboard → Export* — later phases.
+7. **Accuracy assessment** — claim-level fact-checking against official sources.
+8. *Dashboard → Export* — later phases.
     """
 )
 
