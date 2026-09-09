@@ -1,4 +1,4 @@
-# YouTube Transport Research Tool
+# Transport Information Analysis Tool
 
 A research workflow application for a content analysis of YouTube videos about how to use
 public transport and alternative transport services in Australia. See

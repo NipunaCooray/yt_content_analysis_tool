@@ -10,3 +10,7 @@ venv/
 .pytest_cache/
 *.egg-info/
 .streamlit/secrets.toml
+
+# Auto-registered by Streamlit into the venv; local tooling only.
+.agents/
+.claude/skills/developing-with-streamlit

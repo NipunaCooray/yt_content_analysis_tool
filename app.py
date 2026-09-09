@@ -1,5 +1,5 @@
 """
-YouTube Transport Research Tool - entry point / page router.
+Transport Information Analysis Tool - entry point / page router.
 
 Run with: streamlit run app.py
 
@@ -15,7 +15,7 @@ import streamlit as st
 from db.database import init_db
 
 st.set_page_config(
-    page_title="YouTube Transport Research Tool",
+    page_title="Transport Information Analysis Tool",
     page_icon="🚌",
     layout="wide",
 )

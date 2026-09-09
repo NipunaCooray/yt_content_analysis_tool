@@ -11,7 +11,7 @@ db = get_session()
 current_study, current_reviewer = render_context_sidebar(db)
 
 page_header(
-    "🚌 YouTube Transport Research Tool",
+    "🚌 Transport Information Analysis Tool",
     "Research data collection, screening, coding, accuracy-assessment, and export tool for a "
     "content analysis of Australian public/alternative transport videos on YouTube.",
 )
