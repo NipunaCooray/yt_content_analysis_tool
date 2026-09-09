@@ -2,6 +2,14 @@
 
 ## Coding Agent Handover / Product Specification
 
+> **Implementation status (updated):** All 7 phases below (sections 35, 46-50) are built and
+> shipped, running under the product name **Transport Information Analysis Tool**. In addition,
+> double screening/coding and inter-rater reliability -- described in section 20 below as a
+> deferred, schema-only concern -- has since been fully implemented as **Phase 8**: reviewer-scoped
+> screening/coding records, random double-coding sample selection, blind-until-completion
+> comparison, percentage agreement, and Cohen's kappa. Sections 6, 19-22, 24, 35, 41, 44, and 45
+> have been updated in place to describe the system as built; changes are marked inline.
+
 ## 1. Project overview
 
 Build a research workflow web application for a study analysing YouTube videos about **how to use public transport and alternative transport services in Australia**.
@@ -175,9 +183,10 @@ Recommended pages:
 6. Screening
 7. Video coding
 8. Accuracy assessment
-9. Dashboard
-10. Export
-11. Settings
+9. Reliability *(added -- see section 20)*
+10. Dashboard
+11. Export
+12. Settings
 
 The UI should be clean, minimal, research-oriented, and optimised for repeated coding work.
 
@@ -983,27 +992,50 @@ Store reviewer ID on:
 - Video coding
 - Accuracy claims
 
+**Implemented (see section 20):** screening decisions and video coding are now stored one
+record per (video, reviewer) pair rather than one per video, specifically so that two
+reviewers' independent work on the same video is never lost.
+
 ---
 
 # 20. Double coding and reliability
 
-This can be implemented after the core workflow but should be anticipated in the schema.
+**Implemented.** The original plan below deferred double coding to a later phase and asked
+only that the schema anticipate it. It has since been built in full, because the study's
+screening/coding QC process (double-screening/coding a 20-30% sample, comparing decisions,
+computing reliability) cannot safely run on a schema that stores only one decision per video --
+a second reviewer's save would silently overwrite the first's. What was built:
 
-Potential workflow:
+- **Reviewer-scoped records.** `screening_decisions` and `video_coding` are keyed by
+  (video, reviewer), not just video. A second reviewer screening/coding a video already done
+  by another reviewer creates an independent record; neither overwrites the other.
+- **Canonical decision.** Anything that needs a single answer per video -- the "only included
+  videos enter coding" gate, dashboard counts, and the original required exports -- uses the
+  *canonical* record: the earliest-recorded reviewer's decision for that video. A lead reviewer
+  who wants to change their own canonical decision after a QC discussion just re-edits their own
+  record; no separate "resolution" step is needed.
+- **Random sample selection.** A target-percentage selector (default 25%) randomly adds
+  not-yet-sampled videos to a double-coding sample, separately for the screening and coding
+  stages. Re-running it with a higher percentage only adds videos, never removes ones already
+  selected.
+- **Blind until completion.** A reviewer only ever sees/edits their *own* prior decision on the
+  Screening/Video coding pages. Another reviewer's decision for the same video is revealed only
+  after the current reviewer has submitted their own -- avoiding the double-coding sample
+  becoming self-fulfilling.
+- **Reliability page.** Sample selection, plus for each double-coded video: percentage agreement
+  and Cohen's kappa for the screening decision, each single-value video-coding characteristic
+  (uploader type, audience, older-adult-targeted), each of the 15 information-coverage domains,
+  each of the 12 older-adult needs, and each of the 9 presentation items; multi-select fields
+  (transport modes, jurisdictions) use average Jaccard set-overlap instead of kappa, which isn't
+  defined for sets. A disagreements list supports the QC discussion. A compact version (screening
+  kappa, average coding-characteristics kappa) also appears on the Dashboard.
+- **Export.** Every reviewer's raw screening/coding records, plus a computed
+  agreement/kappa summary, are exportable -- see section 22.
 
-- Randomly assign 20–30% of videos to two reviewers
-- Store separate coding records
-- Compare responses
-- Flag disagreements
-
-Later dashboard features may include:
-
-- Percentage agreement
-- Cohen's kappa for suitable categorical variables
-- List of disagreements
-- Resolution status
-
-Do not block the MVP on advanced reliability calculations.
+Not built: a formal adjudication workflow with its own resolution record (see section 44) --
+disagreements are resolved by the lead reviewer editing their own canonical record after
+discussion, which was judged sufficient for the study's QC process without adding a fourth
+"resolved decision" concept per video.
 
 ---
 
@@ -1057,6 +1089,16 @@ The dashboard is primarily descriptive.
 
 Do not build advanced inferential statistics into V1.
 
+## Reliability summary *(added -- see section 20)*
+
+A compact reliability readout also lives on the Dashboard, alongside the full detail on the
+dedicated Reliability page:
+
+- Screening decision agreement (Cohen's kappa)
+- Average video-coding characteristics agreement (Cohen's kappa)
+
+Both show "—" until at least one video has been independently double-screened/coded.
+
 ---
 
 # 22. Export
@@ -1079,6 +1121,19 @@ Provide separate exports for:
 12. Presentation coding
 13. Accuracy claims
 14. Reviewers
+
+## Additional reliability datasets *(added -- see section 20)*
+
+Beyond the 14 required datasets above, three additive datasets support reliability reporting.
+Datasets 8/9 above remain the *canonical* (one-per-video) records; these carry every reviewer's
+independent record plus the computed statistics:
+
+15. Screening decisions (all reviewers) -- every reviewer's independent screening record, not
+    collapsed to the canonical one
+16. Video characteristics (all reviewers) -- every reviewer's independent coding record
+17. Reliability summary -- percentage agreement and Cohen's kappa per field (screening decision,
+    each coding characteristic, and each information-coverage/older-adult-needs/presentation
+    domain), for the methods section (see section 57 of the study-initiation guide)
 
 ## Formats
 
@@ -1283,6 +1338,11 @@ screened_at
 updated_at
 ```
 
+**Implemented as (video_id, reviewer_id) rather than one row per video_id** (see section 20):
+each reviewer's decision on a video is its own row, so a second reviewer's screening never
+overwrites the first's. The *canonical* decision used everywhere a single answer is needed
+(coding gate, dashboard, the required exports) is the earliest-recorded row per video_id.
+
 ## video_coding
 
 ```text
@@ -1300,6 +1360,9 @@ status
 coded_at
 updated_at
 ```
+
+**Implemented as (video_id, reviewer_id) rather than one row per video_id**, for the same
+reason and with the same canonical-record rule as screening_decisions above.
 
 ## information_domain_codes
 
@@ -1370,6 +1433,21 @@ entity_id
 details_json
 created_at
 ```
+
+## double_coding_samples *(added -- see section 20)*
+
+```text
+id
+study_id
+video_id
+stage           -- "screening" | "coding"
+created_at
+```
+
+Marks a video as selected into the random double-coding sample for a given stage. Not required
+for double coding itself -- any two reviewers can independently screen/code any video and that
+alone produces comparable records -- this table only tracks a deliberate random sample per the
+20-30% recommendation.
 
 ---
 
@@ -1742,6 +1820,29 @@ Success condition:
 
 The study team can monitor progress and export analysis-ready data.
 
+## Phase 8 — Reliability *(added -- see section 20)*
+
+Originally deferred (see the pre-implementation version of section 20); built after Phase 7
+once it became clear the study's QC process could not run safely without it.
+
+Build:
+
+- Reviewer-scoped screening_decisions and video_coding (one record per (video, reviewer), not
+  per video)
+- Canonical-decision resolution (earliest-recorded reviewer) for the coding gate, dashboard,
+  and required exports
+- Random double-coding sample selection per stage (screening/coding)
+- Blind-until-completion comparison on the Screening/Video coding pages
+- Reliability page: percentage agreement and Cohen's kappa per field, disagreements list
+- Reliability summary on the Dashboard
+- Additional reviewer-level and reliability-summary exports
+
+Success condition:
+
+Two reviewers can independently screen/code the same sample of videos without either
+overwriting the other, and the research team can see percentage agreement and Cohen's kappa
+for the resulting double-coded data.
+
 ---
 
 # 36. Testing requirements
@@ -1892,6 +1993,14 @@ study_001_accuracy_claims.csv
 study_001_reviewers.csv
 ```
 
+Additional reliability datasets *(added -- see section 20)*:
+
+```text
+study_001_screening_all_reviewers.csv
+study_001_video_coding_all_reviewers.csv
+study_001_reliability_summary.csv
+```
+
 ---
 
 # 42. Non-functional requirements
@@ -1938,9 +2047,13 @@ Potential later additions:
 - Transcript import where legally/technically available
 - Automatic content summaries
 - Automatic claim extraction for human verification
-- Inter-rater reliability dashboard
-- Adjudication workflow
-- Random double-coding assignment
+- ~~Inter-rater reliability dashboard~~ -- **done, see section 20** (Reliability page + Dashboard summary)
+- Adjudication workflow -- **partially done:** disagreements are surfaced and the canonical
+  record can be edited by the lead reviewer after discussion; a dedicated resolution record
+  (a formal "this is the adjudicated answer" flag, separate from any one reviewer's record)
+  is still future work
+- ~~Random double-coding assignment~~ -- **done, see section 20** (target-percentage random
+  sample selector, per stage)
 - Excel workbook export
 - REDCap-style codebook import/export
 - State-level coverage heatmaps
@@ -1952,6 +2065,9 @@ These should not delay the MVP.
 ---
 
 # 45. Suggested repository structure
+
+*(as-built structure updated -- see section 20; page numbering renumbered 09→12 to make room for
+Reliability at 09, since app.py's explicit page list -- not filename order -- drives nav order)*
 
 ```text
 youtube_transport_research_tool/
@@ -1965,8 +2081,10 @@ youtube_transport_research_tool/
 │   ├── 06_screening.py
 │   ├── 07_video_coding.py
 │   ├── 08_accuracy_assessment.py
-│   ├── 09_dashboard.py
-│   └── 10_export.py
+│   ├── 09_reliability.py
+│   ├── 10_dashboard.py
+│   ├── 11_export.py
+│   └── 12_settings.py
 │
 ├── db/
 │   ├── database.py
@@ -1982,6 +2100,7 @@ youtube_transport_research_tool/
 │   ├── screening_service.py
 │   ├── coding_service.py
 │   ├── accuracy_service.py
+│   ├── reliability_service.py
 │   └── export_service.py
 │
 ├── components/
@@ -2000,6 +2119,7 @@ youtube_transport_research_tool/
 │   ├── test_database.py
 │   ├── test_deduplication.py
 │   ├── test_pilot_search.py
+│   ├── test_reliability.py
 │   └── test_exports.py
 │
 ├── data/
@@ -2152,6 +2272,7 @@ The most important methodological features are:
 - Older-adult-needs assessment
 - Claim-level accuracy checking
 - Researcher attribution
+- Double-screening/coding with measurable inter-rater reliability *(added -- see section 20)*
 - Clean analysis-ready exports
 
 The product should feel like a purpose-built research tool, not a generic social-media dashboard.
