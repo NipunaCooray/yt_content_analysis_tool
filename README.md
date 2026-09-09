@@ -80,3 +80,7 @@ data/                   # local SQLite database file (git-ignored)
 Coding-domain vocabularies (transport modes, information-coverage domains, older-adult needs,
 accuracy categories, etc.) live centrally in `utils/constants.py` so the research team can amend
 the coding framework without touching UI code.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
