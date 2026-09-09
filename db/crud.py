@@ -13,12 +13,15 @@ from sqlalchemy.orm import Session
 
 from db.models import (
     AuditLog,
+    FullSearchRun,
     PilotSearchResult,
     PilotSearchRun,
     Reviewer,
     SearchQuery,
+    SearchResultRaw,
     SearchStrategyApproval,
     Study,
+    Video,
     utcnow,
 )
 
@@ -349,3 +352,74 @@ def list_search_strategy_approvals(db: Session, study_id: int) -> list[SearchStr
 def get_latest_approval(db: Session, study_id: int) -> SearchStrategyApproval | None:
     approvals = list_search_strategy_approvals(db, study_id)
     return approvals[0] if approvals else None
+
+
+# ---------------------------------------------------------------------------
+# Full search runs / raw results / deduplicated videos (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def create_full_search_run(db: Session, study_id: int, **fields: Any) -> FullSearchRun:
+    run = FullSearchRun(study_id=study_id, **fields)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    log_audit_event(db, "full_search_run", "full_search_run", run.id, study_id=study_id)
+    return run
+
+
+def list_full_search_runs(db: Session, study_id: int) -> list[FullSearchRun]:
+    stmt = (
+        select(FullSearchRun)
+        .where(FullSearchRun.study_id == study_id)
+        .order_by(FullSearchRun.run_timestamp.desc())
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def get_full_search_run(db: Session, run_id: int) -> FullSearchRun | None:
+    return db.get(FullSearchRun, run_id)
+
+
+def add_search_result_raw(db: Session, full_search_run_id: int, **fields: Any) -> SearchResultRaw:
+    result = SearchResultRaw(full_search_run_id=full_search_run_id, **fields)
+    db.add(result)
+    return result
+
+
+def list_search_results_raw(
+    db: Session,
+    study_id: int,
+    full_search_run_id: int | None = None,
+) -> list[SearchResultRaw]:
+    stmt = select(SearchResultRaw).join(
+        FullSearchRun, SearchResultRaw.full_search_run_id == FullSearchRun.id
+    ).where(FullSearchRun.study_id == study_id)
+    if full_search_run_id is not None:
+        stmt = stmt.where(SearchResultRaw.full_search_run_id == full_search_run_id)
+    stmt = stmt.order_by(SearchResultRaw.query_id, SearchResultRaw.result_rank)
+    return list(db.execute(stmt).scalars().all())
+
+
+def count_search_results_raw(db: Session, study_id: int, full_search_run_id: int | None = None) -> int:
+    return len(list_search_results_raw(db, study_id, full_search_run_id))
+
+
+def get_video_by_youtube_id(db: Session, study_id: int, video_id: str) -> Video | None:
+    stmt = select(Video).where(Video.study_id == study_id, Video.video_id == video_id)
+    return db.execute(stmt).scalars().first()
+
+
+def create_video(db: Session, study_id: int, **fields: Any) -> Video:
+    video = Video(study_id=study_id, **fields)
+    db.add(video)
+    return video
+
+
+def list_videos(db: Session, study_id: int) -> list[Video]:
+    stmt = select(Video).where(Video.study_id == study_id).order_by(Video.created_at)
+    return list(db.execute(stmt).scalars().all())
+
+
+def get_video(db: Session, video_pk: int) -> Video | None:
+    return db.get(Video, video_pk)

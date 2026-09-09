@@ -32,7 +32,7 @@ if current_study is None:
     )
 else:
     st.subheader(f"Current study: {current_study.name}")
-    cols = st.columns(4)
+    cols = st.columns(5)
     cols[0].metric("Status", current_study.search_status)
     query_count = len(crud.list_search_queries(db, current_study.id))
     active_count = len(crud.list_search_queries(db, current_study.id, active_only=True))
@@ -40,6 +40,8 @@ else:
     cols[2].metric("Active queries", active_count)
     pilot_runs = crud.list_pilot_search_runs(db, current_study.id)
     cols[3].metric("Pilot runs", len(pilot_runs))
+    unique_videos = crud.list_videos(db, current_study.id)
+    cols[4].metric("Unique videos", len(unique_videos))
 
     if current_study.description:
         st.write(current_study.description)
@@ -50,7 +52,7 @@ st.markdown(
 1. **Study setup** — define the study and its defaults.
 2. **Search strategy** — build the reproducible query set.
 3. **Pilot search** — test queries on a small sample, rate relevance, refine, approve.
-4. *Full search results* — run the approved strategy at scale (coming in Phase 3).
+4. **Full search results** — run the approved strategy at scale, deduplicate into the master video list.
 5. *Screening → Video coding → Accuracy assessment → Dashboard → Export* — later phases.
     """
 )

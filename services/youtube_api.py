@@ -8,6 +8,7 @@ handover doc section 10.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -107,48 +108,75 @@ def search_videos(
     region_code: str | None = "AU",
     relevance_language: str | None = "en",
 ) -> list[SearchResultItem]:
-    """Run a single search.list call and return normalised results, ranked."""
+    """Run search.list for a query and return normalised, ranked results.
+
+    YouTube caps each search.list call at 50 results, so requests for more
+    than that are paginated internally via nextPageToken (each page is a
+    separate quota-consuming call -- see estimate_search_calls()).
+    """
     client = _build_client()
-    try:
-        request_kwargs: dict[str, Any] = dict(
-            part="snippet",
-            q=query,
-            type="video",
-            maxResults=max_results,
-            order=order,
-        )
-        if region_code:
-            request_kwargs["regionCode"] = region_code
-        if relevance_language:
-            request_kwargs["relevanceLanguage"] = relevance_language
-
-        response = client.search().list(**request_kwargs).execute()
-    except Exception as exc:  # noqa: BLE001 - normalised below
-        raise _translate_http_error(exc) from exc
-
-    items = response.get("items", [])
     results: list[SearchResultItem] = []
-    for rank, item in enumerate(items, start=1):
-        vid = item.get("id", {}).get("videoId")
-        if not vid:
-            continue
-        snippet = item.get("snippet", {})
-        results.append(
-            SearchResultItem(
-                video_id=vid,
-                title=snippet.get("title", ""),
-                description=snippet.get("description", ""),
-                channel_title=snippet.get("channelTitle", ""),
-                published_at=parse_youtube_datetime(snippet.get("publishedAt")),
-                thumbnail_url=thumbnail_url_from_snippet(snippet),
-                video_url=video_url(vid),
-                rank=rank,
-                raw=item,
+    page_token: str | None = None
+
+    while len(results) < max_results:
+        page_size = min(50, max_results - len(results))
+        try:
+            request_kwargs: dict[str, Any] = dict(
+                part="snippet",
+                q=query,
+                type="video",
+                maxResults=page_size,
+                order=order,
             )
-        )
+            if region_code:
+                request_kwargs["regionCode"] = region_code
+            if relevance_language:
+                request_kwargs["relevanceLanguage"] = relevance_language
+            if page_token:
+                request_kwargs["pageToken"] = page_token
+
+            response = client.search().list(**request_kwargs).execute()
+        except Exception as exc:  # noqa: BLE001 - normalised below
+            raise _translate_http_error(exc) from exc
+
+        items = response.get("items", [])
+        for item in items:
+            vid = item.get("id", {}).get("videoId")
+            if not vid:
+                continue
+            snippet = item.get("snippet", {})
+            results.append(
+                SearchResultItem(
+                    video_id=vid,
+                    title=snippet.get("title", ""),
+                    description=snippet.get("description", ""),
+                    channel_title=snippet.get("channelTitle", ""),
+                    published_at=parse_youtube_datetime(snippet.get("publishedAt")),
+                    thumbnail_url=thumbnail_url_from_snippet(snippet),
+                    video_url=video_url(vid),
+                    rank=len(results) + 1,
+                    raw=item,
+                )
+            )
+
+        page_token = response.get("nextPageToken")
+        if not page_token or not items:
+            break
+
     if not results:
         logger.info("Search for query %r returned no results.", query)
     return results
+
+
+def estimate_search_calls(num_queries: int, max_results: int) -> int:
+    """Number of search.list calls (quota units) a run will use.
+
+    Each call costs ~100 quota units regardless of page size, and each page
+    holds at most 50 results, so requesting more than 50 per query costs
+    proportionally more.
+    """
+    pages_per_query = max(1, math.ceil(max_results / 50))
+    return num_queries * pages_per_query
 
 
 def get_video_details(video_ids: list[str]) -> dict[str, dict]:

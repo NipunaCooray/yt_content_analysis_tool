@@ -8,7 +8,7 @@ from components.video_player import video_thumbnail
 from db import crud
 from db.database import get_session
 from services import pilot_service
-from services.youtube_api import YouTubeAPIError, api_key_configured
+from services.youtube_api import api_key_configured, estimate_search_calls
 from utils.constants import IRRELEVANCE_REASONS, PILOT_RESULT_COUNT_OPTIONS, SEARCH_ORDER_OPTIONS
 
 db = get_session()
@@ -60,9 +60,9 @@ with st.expander("Run a new pilot search", expanded=not all_runs):
         )
         run_notes = st.text_input("Notes for this pilot run (optional)")
 
-        est_calls = len(selected_ids)
+        est_calls = estimate_search_calls(len(selected_ids), int(results_per_query))
         st.caption(
-            f"Estimated API usage: {est_calls} search call(s) "
+            f"Estimated API usage: ~{est_calls} search call(s) "
             f"(~{est_calls * 100} search-quota units)."
         )
 
