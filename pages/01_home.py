@@ -13,7 +13,7 @@ current_study, current_reviewer = render_context_sidebar(db)
 
 page_header(
     "🚌 Transport Information Analysis Tool",
-    "Research data collection, screening, coding, accuracy-assessment, and export tool for a "
+    "Research data collection, screening, coding, accuracy-assessment, reliability, and export tool for a "
     "content analysis of Australian public/alternative transport videos on YouTube.",
 )
 
@@ -84,8 +84,9 @@ st.markdown(
 5. **Screening** — include/exclude/unsure each unique video, with reasons and notes.
 6. **Video coding** — characteristics, information coverage, older-adult needs, presentation.
 7. **Accuracy assessment** — claim-level fact-checking against official sources.
-8. **Dashboard** — study-wide progress and descriptive charts.
-9. **Export** — all datasets as CSV/JSON, individually or as one ZIP.
+8. **Reliability** — random double-screening/coding samples, percentage agreement, Cohen's kappa.
+9. **Dashboard** — study-wide progress and descriptive charts.
+10. **Export** — all datasets as CSV/JSON, individually or as one ZIP.
     """
 )
 

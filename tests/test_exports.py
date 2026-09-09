@@ -91,8 +91,11 @@ def test_export_filename_matches_spec_naming_convention(db_session):
 
 
 def test_all_fourteen_datasets_registered():
-    assert len(export_service.EXPORT_DATASETS) == 14
-    assert len({d.key for d in export_service.EXPORT_DATASETS}) == 14  # no duplicate keys
+    required = [d for d in export_service.EXPORT_DATASETS if d.required]
+    assert len(required) == 14  # handover doc section 22
+    # Plus reliability datasets (Phase 8), additive beyond the required 14.
+    assert len(export_service.EXPORT_DATASETS) == 17
+    assert len({d.key for d in export_service.EXPORT_DATASETS}) == 17  # no duplicate keys
 
 
 def test_all_datasets_populated_for_a_fully_worked_study(db_session, fully_populated_study):
@@ -163,14 +166,15 @@ def test_empty_dataset_still_produces_valid_csv_header_only(db_session):
     assert csv_bytes == b"\n"  # pandas emits just a blank line for a columnless empty frame
 
 
-def test_build_zip_export_contains_all_fourteen_csvs(db_session, fully_populated_study):
+def test_build_zip_export_contains_all_seventeen_csvs(db_session, fully_populated_study):
     study = fully_populated_study
     zip_bytes = export_service.build_zip_export(db_session, study.id)
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         names = zf.namelist()
-        assert len(names) == 14
+        assert len(names) == 17
         assert "study_001_search_queries.csv" in names
         assert "study_001_accuracy_claims.csv" in names
+        assert "study_001_reliability_summary.csv" in names
         # Spot-check one file actually has real content.
         content = zf.read("study_001_screening.csv").decode("utf-8")
         assert "Include" in content

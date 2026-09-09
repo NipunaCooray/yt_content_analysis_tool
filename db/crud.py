@@ -6,6 +6,7 @@ in one place.
 
 from __future__ import annotations
 
+import random
 from typing import Any
 
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from db.models import (
     AccuracyClaim,
     AccuracyReviewStatus,
     AuditLog,
+    DoubleCodingSample,
     FullSearchRun,
     InformationDomainCode,
     OlderAdultNeedCode,
@@ -433,15 +435,20 @@ def get_video(db: Session, video_pk: int) -> Video | None:
 
 
 def list_included_videos(db: Session, study_id: int) -> list[Video]:
-    """Videos with a screening decision of 'Include' -- the only ones that
-    enter the coding workflow (handover doc section 14)."""
-    stmt = (
-        select(Video)
-        .join(ScreeningDecision, ScreeningDecision.video_id == Video.id)
-        .where(Video.study_id == study_id, ScreeningDecision.decision == "Include")
-        .order_by(Video.created_at)
-    )
-    return list(db.execute(stmt).scalars().all())
+    """Videos whose *canonical* screening decision is 'Include' -- the only
+    ones that enter the coding workflow (handover doc section 14).
+
+    Filters in Python against the canonical (earliest-reviewer) decision
+    rather than a SQL join, because a double-coded video can have more than
+    one screening_decisions row and a join would both double-count it and
+    risk including it on a non-canonical reviewer's decision alone.
+    """
+    videos = list_videos(db, study_id)
+    canonical = list_screening_decisions(db, study_id)
+    return [
+        v for v in videos
+        if canonical.get(v.id) is not None and canonical[v.id].decision == "Include"
+    ]
 
 
 def list_raw_results_for_video(db: Session, study_id: int, video_id: str) -> list[SearchResultRaw]:
@@ -456,20 +463,73 @@ def list_raw_results_for_video(db: Session, study_id: int, video_id: str) -> lis
 
 
 # ---------------------------------------------------------------------------
-# Screening decisions (Phase 4)
+# Screening decisions (Phase 4; reviewer-scoped double screening in Phase 8)
 # ---------------------------------------------------------------------------
+#
+# Each (video, reviewer) pair gets its own row -- a second reviewer
+# independently screening a video never overwrites the first's decision,
+# which is what makes double-screening possible. Downstream consumers that
+# need a single "the" decision per video (the coding gate, dashboard,
+# exports) use the *canonical* one: the earliest-recorded reviewer's
+# decision for that video. If a lead reviewer wants to change their own
+# canonical decision after a QC discussion, they just re-edit their own
+# record -- it stays canonical because it's still the earliest row.
 
 
-def get_screening_decision(db: Session, video_pk: int) -> ScreeningDecision | None:
-    stmt = select(ScreeningDecision).where(ScreeningDecision.video_id == video_pk)
+def get_screening_decision(db: Session, video_pk: int, reviewer_id: int | None) -> ScreeningDecision | None:
+    """One reviewer's own screening decision for one video."""
+    stmt = select(ScreeningDecision).where(
+        ScreeningDecision.video_id == video_pk, ScreeningDecision.reviewer_id == reviewer_id
+    )
     return db.execute(stmt).scalars().first()
 
 
+def list_screening_decisions_for_video(db: Session, video_pk: int) -> list[ScreeningDecision]:
+    """Every reviewer's decision for one video, oldest first (oldest = canonical)."""
+    stmt = (
+        select(ScreeningDecision)
+        .where(ScreeningDecision.video_id == video_pk)
+        .order_by(ScreeningDecision.screened_at)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
 def list_screening_decisions(db: Session, study_id: int) -> dict[int, ScreeningDecision]:
-    """video_id (PK) -> its screening decision, for batch status lookups."""
-    stmt = select(ScreeningDecision).where(ScreeningDecision.study_id == study_id)
+    """video_id (PK) -> its *canonical* (earliest-reviewer) screening
+    decision, for batch status lookups (dashboard, coding gate, exports)."""
+    stmt = (
+        select(ScreeningDecision)
+        .where(ScreeningDecision.study_id == study_id)
+        .order_by(ScreeningDecision.video_id, ScreeningDecision.screened_at)
+    )
+    rows = db.execute(stmt).scalars().all()
+    canonical: dict[int, ScreeningDecision] = {}
+    for row in rows:
+        canonical.setdefault(row.video_id, row)  # first row seen per video = earliest
+    return canonical
+
+
+def list_screening_decisions_for_reviewer(
+    db: Session, study_id: int, reviewer_id: int | None
+) -> dict[int, ScreeningDecision]:
+    """video_id (PK) -> this specific reviewer's own decision, for a
+    reviewer's personal screening queue/progress."""
+    stmt = select(ScreeningDecision).where(
+        ScreeningDecision.study_id == study_id, ScreeningDecision.reviewer_id == reviewer_id
+    )
     rows = db.execute(stmt).scalars().all()
     return {row.video_id: row for row in rows}
+
+
+def list_all_screening_decisions_for_study(db: Session, study_id: int) -> list[ScreeningDecision]:
+    """Every reviewer's screening decision for the study (not collapsed to
+    canonical) -- for exporting the full double-screened dataset."""
+    stmt = (
+        select(ScreeningDecision)
+        .where(ScreeningDecision.study_id == study_id)
+        .order_by(ScreeningDecision.video_id, ScreeningDecision.screened_at)
+    )
+    return list(db.execute(stmt).scalars().all())
 
 
 def upsert_screening_decision(
@@ -481,10 +541,10 @@ def upsert_screening_decision(
     exclusion_reason: str | None,
     notes: str | None,
 ) -> ScreeningDecision:
-    """One screening decision per video: create on first save, otherwise edit
-    it in place (screened_at is preserved from the first save; updated_at
-    tracks the latest edit via the model's onupdate)."""
-    existing = get_screening_decision(db, video_pk)
+    """One screening decision per (video, reviewer): create on first save for
+    that reviewer, otherwise edit it in place (screened_at is preserved from
+    that reviewer's first save; updated_at tracks their latest edit)."""
+    existing = get_screening_decision(db, video_pk, reviewer_id)
     if existing is None:
         existing = ScreeningDecision(
             study_id=study_id,
@@ -498,7 +558,6 @@ def upsert_screening_decision(
         db.add(existing)
         action = "screening_decision_created"
     else:
-        existing.reviewer_id = reviewer_id
         existing.decision = decision
         existing.exclusion_reason = exclusion_reason if decision == "Exclude" else None
         existing.notes = notes
@@ -519,20 +578,68 @@ def upsert_screening_decision(
 
 
 # ---------------------------------------------------------------------------
-# Video coding (Phase 5)
+# Video coding (Phase 5; reviewer-scoped double coding in Phase 8)
 # ---------------------------------------------------------------------------
+#
+# Same reviewer-scoping pattern as screening decisions above: one row per
+# (video, reviewer). Downstream consumers needing a single record per video
+# (export, dashboard) use the canonical (earliest-reviewer) one.
 
 
-def get_video_coding(db: Session, video_pk: int) -> VideoCoding | None:
-    stmt = select(VideoCoding).where(VideoCoding.video_id == video_pk)
+def get_video_coding(db: Session, video_pk: int, reviewer_id: int | None) -> VideoCoding | None:
+    """One reviewer's own coding record for one video."""
+    stmt = select(VideoCoding).where(
+        VideoCoding.video_id == video_pk, VideoCoding.reviewer_id == reviewer_id
+    )
     return db.execute(stmt).scalars().first()
 
 
+def list_video_codings_for_video(db: Session, video_pk: int) -> list[VideoCoding]:
+    """Every reviewer's coding record for one video, oldest first (oldest = canonical)."""
+    stmt = (
+        select(VideoCoding)
+        .where(VideoCoding.video_id == video_pk)
+        .order_by(VideoCoding.coded_at)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
 def list_video_codings(db: Session, study_id: int) -> dict[int, VideoCoding]:
-    """video_id (PK) -> its coding record, for batch status lookups."""
-    stmt = select(VideoCoding).where(VideoCoding.study_id == study_id)
+    """video_id (PK) -> its *canonical* (earliest-reviewer) coding record,
+    for batch status lookups (dashboard, exports)."""
+    stmt = (
+        select(VideoCoding)
+        .where(VideoCoding.study_id == study_id)
+        .order_by(VideoCoding.video_id, VideoCoding.coded_at)
+    )
+    rows = db.execute(stmt).scalars().all()
+    canonical: dict[int, VideoCoding] = {}
+    for row in rows:
+        canonical.setdefault(row.video_id, row)
+    return canonical
+
+
+def list_video_codings_for_reviewer(
+    db: Session, study_id: int, reviewer_id: int | None
+) -> dict[int, VideoCoding]:
+    """video_id (PK) -> this specific reviewer's own coding record, for a
+    reviewer's personal coding queue/progress."""
+    stmt = select(VideoCoding).where(
+        VideoCoding.study_id == study_id, VideoCoding.reviewer_id == reviewer_id
+    )
     rows = db.execute(stmt).scalars().all()
     return {row.video_id: row for row in rows}
+
+
+def list_all_video_codings_for_study(db: Session, study_id: int) -> list[VideoCoding]:
+    """Every reviewer's coding record for the study (not collapsed to
+    canonical) -- for exporting the full double-coded dataset."""
+    stmt = (
+        select(VideoCoding)
+        .where(VideoCoding.study_id == study_id)
+        .order_by(VideoCoding.video_id, VideoCoding.coded_at)
+    )
+    return list(db.execute(stmt).scalars().all())
 
 
 def upsert_video_coding(
@@ -548,9 +655,10 @@ def upsert_video_coding(
     notes: str | None,
     status: str,
 ) -> VideoCoding:
-    """One coding record per video: create on first save, otherwise edit it
-    in place (coded_at is preserved from the first save)."""
-    existing = get_video_coding(db, video_pk)
+    """One coding record per (video, reviewer): create on first save for that
+    reviewer, otherwise edit it in place (coded_at is preserved from that
+    reviewer's first save)."""
+    existing = get_video_coding(db, video_pk, reviewer_id)
     if existing is None:
         existing = VideoCoding(
             study_id=study_id,
@@ -569,7 +677,6 @@ def upsert_video_coding(
         db.flush()  # assign existing.id for the sub-table upserts that follow
         action = "video_coding_created"
     else:
-        existing.reviewer_id = reviewer_id
         existing.transport_modes_json = transport_modes
         existing.jurisdictions_json = jurisdictions
         existing.uploader_type = uploader_type
@@ -827,3 +934,39 @@ def list_all_presentation_codes_for_study(db: Session, study_id: int) -> list[Pr
         .order_by(PresentationCode.video_coding_id, PresentationCode.item_name)
     )
     return list(db.execute(stmt).scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Double coding samples (Phase 8)
+# ---------------------------------------------------------------------------
+
+
+def list_double_coding_sample_video_ids(db: Session, study_id: int, stage: str) -> set[int]:
+    stmt = select(DoubleCodingSample.video_id).where(
+        DoubleCodingSample.study_id == study_id, DoubleCodingSample.stage == stage
+    )
+    return {row[0] for row in db.execute(stmt).all()}
+
+
+def select_random_double_coding_sample(
+    db: Session, study_id: int, stage: str, eligible_video_ids: list[int], percentage: float
+) -> int:
+    """Randomly add eligible videos not already sampled to the stage's
+    double-coding sample. Returns how many were newly added."""
+    already = list_double_coding_sample_video_ids(db, study_id, stage)
+    candidates = [vid for vid in eligible_video_ids if vid not in already]
+    target_count = round(len(eligible_video_ids) * (percentage / 100))
+    already_count = len(already & set(eligible_video_ids))
+    to_add = max(0, target_count - already_count)
+    to_add = min(to_add, len(candidates))
+    chosen = random.sample(candidates, to_add) if to_add else []
+
+    for video_pk in chosen:
+        db.add(DoubleCodingSample(study_id=study_id, video_id=video_pk, stage=stage))
+    db.commit()
+    if chosen:
+        log_audit_event(
+            db, "double_coding_sample_selected", "double_coding_sample", None,
+            study_id=study_id, details={"stage": stage, "video_ids": chosen},
+        )
+    return len(chosen)

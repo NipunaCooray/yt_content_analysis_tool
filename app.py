@@ -31,9 +31,10 @@ PAGES = [
     st.Page("pages/06_screening.py", title="Screening", icon="✅"),
     st.Page("pages/07_video_coding.py", title="Video coding", icon="🏷️"),
     st.Page("pages/08_accuracy_assessment.py", title="Accuracy assessment", icon="🔎"),
-    st.Page("pages/09_dashboard.py", title="Dashboard", icon="📊"),
-    st.Page("pages/10_export.py", title="Export", icon="⬇️"),
-    st.Page("pages/11_settings.py", title="Settings", icon="⚙️"),
+    st.Page("pages/09_reliability.py", title="Reliability", icon="🎯"),
+    st.Page("pages/10_dashboard.py", title="Dashboard", icon="📊"),
+    st.Page("pages/11_export.py", title="Export", icon="⬇️"),
+    st.Page("pages/12_settings.py", title="Settings", icon="⚙️"),
 ]
 
 nav = st.navigation(PAGES)

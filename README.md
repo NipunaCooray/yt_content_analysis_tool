@@ -5,12 +5,13 @@ public transport and alternative transport services in Australia. See
 [`youtube_transport_research_tool_handover.md`](youtube_transport_research_tool_handover.md)
 for the full product specification.
 
-This is a research data collection, screening, coding, accuracy-assessment, and export tool —
-not a general-purpose YouTube analytics dashboard.
+This is a research data collection, screening, coding, accuracy-assessment, reliability, and
+export tool — not a general-purpose YouTube analytics dashboard.
 
 ## Status
 
-**All 7 phases implemented** (see the handover doc, section 35, for the phase breakdown):
+**All 7 phases from the handover doc implemented** (see section 35 for the phase breakdown),
+**plus reviewer-scoped double screening/coding and inter-rater reliability**:
 
 - Study / reviewer / search-query CRUD, SQLite persistence
 - Pilot search: relevance rating, per-query performance stats, diagnostics, run history, and
@@ -21,10 +22,14 @@ not a general-purpose YouTube analytics dashboard.
 - Video coding: characteristics, information-coverage, older-adult-needs, and presentation
   coding, gated to included videos
 - Accuracy assessment: claim-level fact-checking against official sources
-- Dashboard: study-wide counters and descriptive charts
-- Export: all 14 required CSV/JSON datasets, individually or as one ZIP
+- **Reliability**: each reviewer's screening/coding is kept as an independent record (never
+  overwritten by a second reviewer), a random double-coding sample selector, blind-until-
+  completion comparison, percentage agreement, and Cohen's kappa
+- Dashboard: study-wide counters and descriptive charts, including a reliability summary
+- Export: the 14 required CSV/JSON datasets plus 3 reliability datasets (every reviewer's raw
+  records, and a computed agreement/kappa summary), individually or as one ZIP
 
-57 automated tests pass (mocked YouTube API, in-memory DB — see Tests below).
+73 automated tests pass (mocked YouTube API, in-memory DB — see Tests below).
 
 ## Setup
 

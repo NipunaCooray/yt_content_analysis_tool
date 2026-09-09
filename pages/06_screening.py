@@ -25,6 +25,16 @@ page_header("Screening", "Determine which unique videos are eligible for content
 if not require_study(current_study):
     st.stop()
 
+if current_reviewer is None:
+    st.warning(
+        "Select a reviewer in the sidebar before screening — each reviewer's decisions are "
+        "kept separately so a second reviewer's screening never overwrites the first's "
+        "(needed for double-screening; see the Reliability page).",
+        icon="👤",
+    )
+    db.close()
+    st.stop()
+
 study_id = current_study.id
 
 all_videos = crud.list_videos(db, study_id)
@@ -35,19 +45,28 @@ if not all_videos:
     db.close()
     st.stop()
 
-decisions = crud.list_screening_decisions(db, study_id)
+# Canonical (earliest-reviewer) decision per video -- drives study-wide
+# progress and the coding gate. This reviewer's own decisions drive their
+# personal queue below, so a second reviewer doing a QC pass sees videos
+# they personally haven't screened yet, even if someone else already has.
+canonical_decisions = crud.list_screening_decisions(db, study_id)
+my_decisions = crud.list_screening_decisions_for_reviewer(db, study_id, current_reviewer.id)
+double_coding_sample = crud.list_double_coding_sample_video_ids(db, study_id, "screening")
 
 # ---------------------------------------------------------------------------
 # Progress
 # ---------------------------------------------------------------------------
 
-progress = screening_service.compute_progress(all_videos, decisions)
+progress = screening_service.compute_progress(all_videos, canonical_decisions)
 p1, p2, p3, p4, p5 = st.columns(5)
 p1.metric("Total", progress.total)
 p2.metric("Not screened", progress.not_screened)
 p3.metric("Included", progress.included)
 p4.metric("Excluded", progress.excluded)
 p5.metric("Unsure", progress.unsure)
+st.caption(
+    f"Your progress ({current_reviewer.name}): {len(my_decisions)} of {len(all_videos)} screened."
+)
 
 st.markdown("---")
 
@@ -55,22 +74,15 @@ st.markdown("---")
 # Filters
 # ---------------------------------------------------------------------------
 
-reviewers = crud.list_reviewers(db)
-filter_col1, filter_col2, filter_col3 = st.columns([2, 2, 1])
+filter_col1, filter_col2 = st.columns([2, 1])
 status_filter = filter_col1.selectbox(
-    "Filter by status",
+    "Filter by your status",
     ["All", screening_service.STATUS_NOT_SCREENED, screening_service.STATUS_INCLUDED,
      screening_service.STATUS_EXCLUDED, screening_service.STATUS_UNSURE],
 )
-reviewer_filter_options = {0: "All reviewers"} | {r.id: r.name for r in reviewers}
-reviewer_filter = filter_col2.selectbox(
-    "Filter by reviewer",
-    options=list(reviewer_filter_options.keys()),
-    format_func=lambda rid: reviewer_filter_options[rid],
-)
-if filter_col3.button("▶ Resume last unscreened"):
+if filter_col2.button("▶ Resume last unscreened"):
     next_unscreened = next(
-        (v for v in all_videos if screening_service.screening_status(decisions.get(v.id))
+        (v for v in all_videos if screening_service.screening_status(my_decisions.get(v.id))
          == screening_service.STATUS_NOT_SCREENED),
         None,
     )
@@ -78,17 +90,21 @@ if filter_col3.button("▶ Resume last unscreened"):
         st.session_state["screening_current_video_pk"] = next_unscreened.id
         st.rerun()
     else:
-        st.toast("All videos have been screened.", icon="✅")
+        st.toast("You've screened every video.", icon="✅")
+
+sample_only = st.checkbox(
+    f"Double-coding sample only ({len(double_coding_sample)} video(s) selected — see Reliability page)"
+)
 
 st.caption(
     "There's no transport-mode filter here — that's assigned during Video coding, which "
-    "happens after screening."
+    "happens after screening. Status filter/icons reflect *your own* decisions."
 )
 
 filtered = [
     v for v in all_videos
-    if (status_filter == "All" or screening_service.screening_status(decisions.get(v.id)) == status_filter)
-    and (reviewer_filter == 0 or (decisions.get(v.id) and decisions[v.id].reviewer_id == reviewer_filter))
+    if (status_filter == "All" or screening_service.screening_status(my_decisions.get(v.id)) == status_filter)
+    and (not sample_only or v.id in double_coding_sample)
 ]
 
 if not filtered:
@@ -107,7 +123,8 @@ if current_pk not in filtered_ids:
 idx = filtered_ids.index(current_pk)
 
 jump_labels = {
-    v.id: f"{STATUS_ICONS[screening_service.screening_status(decisions.get(v.id))]} {v.title[:70]}"
+    v.id: f"{STATUS_ICONS[screening_service.screening_status(my_decisions.get(v.id))]} "
+    f"{'🔁 ' if v.id in double_coding_sample else ''}{v.title[:65]}"
     for v in filtered
 }
 jump_pk = st.selectbox(
@@ -122,8 +139,10 @@ if jump_pk != current_pk:
 st.session_state["screening_current_video_pk"] = current_pk
 
 current_video = crud.get_video(db, current_pk)
-current_decision = decisions.get(current_pk)
+my_current_decision = my_decisions.get(current_pk)
 st.caption(f"Video {idx + 1} of {len(filtered)} (filtered) — {len(all_videos)} total")
+if current_pk in double_coding_sample:
+    st.info("🔁 This video is in the double-coding sample.", icon="🔁")
 
 # ---------------------------------------------------------------------------
 # Video + screening form
@@ -153,10 +172,26 @@ with col_video:
     if current_video.video_url:
         st.link_button("Open on YouTube", current_video.video_url)
 
+    # Other reviewers' decisions are only revealed once *you* have screened
+    # this video yourself -- keeps double-screening blind until completion
+    # (study-initiation guide section 42).
+    if my_current_decision is not None:
+        all_decisions = crud.list_screening_decisions_for_video(db, current_pk)
+        others = [d for d in all_decisions if d.reviewer_id != current_reviewer.id]
+        if others:
+            reviewer_names = {r.id: r.name for r in crud.list_reviewers(db)}
+            with st.expander(f"Other reviewers' decisions ({len(others)})"):
+                for d in others:
+                    st.write(
+                        f"**{reviewer_names.get(d.reviewer_id, 'Unknown')}**: {d.decision}"
+                        + (f" ({d.exclusion_reason})" if d.exclusion_reason else "")
+                    )
+
 with col_form:
     decision_options = ["Include", "Exclude", "Unsure"]
     default_decision = (
-        current_decision.decision if current_decision and current_decision.decision in decision_options
+        my_current_decision.decision
+        if my_current_decision and my_current_decision.decision in decision_options
         else "Include"
     )
     decision = st.radio(
@@ -170,8 +205,8 @@ with col_form:
     exclusion_reason = None
     if decision == "Exclude":
         default_reason = (
-            current_decision.exclusion_reason
-            if current_decision and current_decision.exclusion_reason in EXCLUSION_REASONS
+            my_current_decision.exclusion_reason
+            if my_current_decision and my_current_decision.exclusion_reason in EXCLUSION_REASONS
             else EXCLUSION_REASONS[0]
         )
         exclusion_reason = st.selectbox(
@@ -183,15 +218,15 @@ with col_form:
 
     notes = st.text_area(
         "Screening notes",
-        value=(current_decision.notes if current_decision else "") or "",
+        value=(my_current_decision.notes if my_current_decision else "") or "",
         key=f"screening_notes_{current_pk}",
     )
 
-    if current_decision and current_decision.screened_at:
+    if my_current_decision and my_current_decision.screened_at:
         st.caption(
-            f"First screened {current_decision.screened_at:%Y-%m-%d %H:%M}"
-            + (f", last updated {current_decision.updated_at:%Y-%m-%d %H:%M}"
-               if current_decision.updated_at else "")
+            f"You first screened this {my_current_decision.screened_at:%Y-%m-%d %H:%M}"
+            + (f", last updated {my_current_decision.updated_at:%Y-%m-%d %H:%M}"
+               if my_current_decision.updated_at else "")
         )
 
     def _save(advance: bool):
@@ -199,7 +234,7 @@ with col_form:
             db,
             study_id=study_id,
             video_pk=current_pk,
-            reviewer_id=current_reviewer.id if current_reviewer else None,
+            reviewer_id=current_reviewer.id,
             decision=decision,
             exclusion_reason=exclusion_reason,
             notes=notes or None,

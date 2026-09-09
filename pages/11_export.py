@@ -18,22 +18,29 @@ if not require_study(current_study):
 study_id = current_study.id
 code = study_export_code(study_id)
 
+required_count = sum(1 for d in export_service.EXPORT_DATASETS if d.required)
+bonus_count = len(export_service.EXPORT_DATASETS) - required_count
+
 st.download_button(
-    f"⬇ Download all 14 datasets ({code}_all.zip)",
+    f"⬇ Download all {len(export_service.EXPORT_DATASETS)} datasets ({code}_all.zip)",
     data=export_service.build_zip_export(db, study_id),
     file_name=f"{code}_all.zip",
     mime="application/zip",
     type="primary",
 )
 st.caption(
-    "Each dataset is also available individually below, as CSV (priority format) or JSON."
+    f"{required_count} required datasets plus {bonus_count} reliability datasets (every "
+    "reviewer's independent screening/coding records, and computed agreement/kappa — see "
+    "the Reliability page). Each is also available individually below, as CSV (priority "
+    "format) or JSON."
 )
 
 st.markdown("---")
 
 for dataset in export_service.EXPORT_DATASETS:
     df = export_service.build_dataframe(db, study_id, dataset)
-    with st.expander(f"{dataset.label} — {len(df)} row{'s' if len(df) != 1 else ''}"):
+    badge = "" if dataset.required else " 🎯"
+    with st.expander(f"{dataset.label}{badge} — {len(df)} row{'s' if len(df) != 1 else ''}"):
         if df.empty:
             st.caption("No data yet for this dataset.")
         else:

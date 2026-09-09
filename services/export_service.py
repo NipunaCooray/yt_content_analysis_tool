@@ -265,12 +265,95 @@ def reviewers_df(db: Session, study_id: int) -> pd.DataFrame:
     } for r in rows])
 
 
+# ---------------------------------------------------------------------------
+# Reliability datasets (Phase 8) -- additive, beyond the 14 required datasets.
+# screening.csv/video_coding.csv above are the canonical (one-per-video)
+# records used throughout the tool; these carry every reviewer's
+# independent record plus the computed agreement statistics, for reporting
+# reliability in the methods section (study-initiation guide section 57).
+# ---------------------------------------------------------------------------
+
+
+def screening_all_reviewers_df(db: Session, study_id: int) -> pd.DataFrame:
+    videos = {v.id: v for v in crud.list_videos(db, study_id)}
+    reviewer_names = {r.id: r.name for r in crud.list_reviewers(db)}
+    rows = crud.list_all_screening_decisions_for_study(db, study_id)
+    return pd.DataFrame([{
+        "id": d.id,
+        "video_pk": d.video_id,
+        "video_id": videos[d.video_id].video_id if d.video_id in videos else None,
+        "title": videos[d.video_id].title if d.video_id in videos else None,
+        "reviewer_id": d.reviewer_id,
+        "reviewer_name": reviewer_names.get(d.reviewer_id),
+        "decision": d.decision,
+        "exclusion_reason": d.exclusion_reason,
+        "notes": d.notes,
+        "screened_at": d.screened_at,
+        "updated_at": d.updated_at,
+    } for d in rows])
+
+
+def video_coding_all_reviewers_df(db: Session, study_id: int) -> pd.DataFrame:
+    videos = {v.id: v for v in crud.list_videos(db, study_id)}
+    reviewer_names = {r.id: r.name for r in crud.list_reviewers(db)}
+    rows = crud.list_all_video_codings_for_study(db, study_id)
+    return pd.DataFrame([{
+        "id": c.id,
+        "video_pk": c.video_id,
+        "video_id": videos[c.video_id].video_id if c.video_id in videos else None,
+        "title": videos[c.video_id].title if c.video_id in videos else None,
+        "reviewer_id": c.reviewer_id,
+        "reviewer_name": reviewer_names.get(c.reviewer_id),
+        "transport_modes": _join_list(c.transport_modes_json),
+        "jurisdictions": _join_list(c.jurisdictions_json),
+        "uploader_type": c.uploader_type,
+        "intended_audience": c.intended_audience,
+        "older_adult_targeted": c.older_adult_targeted,
+        "notes": c.notes,
+        "status": c.status,
+        "coded_at": c.coded_at,
+        "updated_at": c.updated_at,
+    } for c in rows])
+
+
+def reliability_summary_df(db: Session, study_id: int) -> pd.DataFrame:
+    from services import reliability_service
+
+    rows: list[dict] = []
+
+    all_videos = crud.list_videos(db, study_id)
+    double_screened = reliability_service.double_coded_videos(db, study_id, all_videos, "screening")
+    if double_screened:
+        stat, _ = reliability_service.screening_reliability(db, study_id, double_screened)
+        rows.append({"stage": "Screening", "field": stat.field_name, "n_pairs": stat.n_pairs,
+                     "agreement_pct": stat.percentage_agreement, "kappa": stat.kappa})
+
+    included_videos = crud.list_included_videos(db, study_id)
+    double_coded = reliability_service.double_coded_videos(db, study_id, included_videos, "coding")
+    if double_coded:
+        char_stats, _ = reliability_service.coding_characteristics_reliability(db, study_id, double_coded)
+        for s in char_stats:
+            rows.append({"stage": "Coding - characteristics", "field": s.field_name, "n_pairs": s.n_pairs,
+                         "agreement_pct": s.percentage_agreement, "kappa": s.kappa})
+        for label, stats in [
+            ("Coding - information coverage", reliability_service.information_domain_reliability(db, double_coded)),
+            ("Coding - older-adult needs", reliability_service.older_adult_need_reliability(db, double_coded)),
+            ("Coding - presentation", reliability_service.presentation_reliability(db, double_coded)),
+        ]:
+            for s in stats:
+                rows.append({"stage": label, "field": s.field_name, "n_pairs": s.n_pairs,
+                             "agreement_pct": s.percentage_agreement, "kappa": s.kappa})
+
+    return pd.DataFrame(rows)
+
+
 @dataclass
 class ExportDataset:
     key: str
     label: str
     filename_suffix: str
     builder: Callable[[Session, int], pd.DataFrame]
+    required: bool = True  # the 14 datasets from handover doc section 22
 
 
 EXPORT_DATASETS: list[ExportDataset] = [
@@ -281,13 +364,25 @@ EXPORT_DATASETS: list[ExportDataset] = [
     ExportDataset("full_search_runs", "Full search runs", "full_search_runs", full_search_runs_df),
     ExportDataset("raw_search_results", "Raw search results", "raw_search_results", raw_search_results_df),
     ExportDataset("unique_videos", "Deduplicated videos", "unique_videos", unique_videos_df),
-    ExportDataset("screening", "Screening decisions", "screening", screening_df),
-    ExportDataset("video_characteristics", "Video characteristics", "video_coding", video_characteristics_df),
+    ExportDataset("screening", "Screening decisions (canonical)", "screening", screening_df),
+    ExportDataset("video_characteristics", "Video characteristics (canonical)", "video_coding", video_characteristics_df),
     ExportDataset("information_domains", "Information coverage coding", "information_domains", information_domains_df),
     ExportDataset("older_adult_needs", "Older-adult-needs coding", "older_adult_needs", older_adult_needs_df),
     ExportDataset("presentation_coding", "Presentation coding", "presentation_coding", presentation_coding_df),
     ExportDataset("accuracy_claims", "Accuracy claims", "accuracy_claims", accuracy_claims_df),
     ExportDataset("reviewers", "Reviewers", "reviewers", reviewers_df),
+    ExportDataset(
+        "screening_all_reviewers", "Screening decisions (all reviewers)", "screening_all_reviewers",
+        screening_all_reviewers_df, required=False,
+    ),
+    ExportDataset(
+        "video_coding_all_reviewers", "Video characteristics (all reviewers)", "video_coding_all_reviewers",
+        video_coding_all_reviewers_df, required=False,
+    ),
+    ExportDataset(
+        "reliability_summary", "Reliability summary (agreement/kappa)", "reliability_summary",
+        reliability_summary_df, required=False,
+    ),
 ]
 
 

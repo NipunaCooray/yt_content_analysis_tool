@@ -326,6 +326,31 @@ class AccuracyReviewStatus(Base):
 
 
 # ---------------------------------------------------------------------------
+# Double coding / reliability (Phase 8)
+# ---------------------------------------------------------------------------
+
+
+class DoubleCodingSample(Base):
+    """Marks a video as selected for independent double screening/coding.
+
+    Not required for double coding to work -- any reviewer can independently
+    screen/code any video, and a second (video, reviewer) record is what
+    makes it "double coded". This table just tracks a deliberate random
+    sample per stage, per handover doc section 20 / the study guide's
+    20-30% double-coding recommendation.
+    """
+
+    __tablename__ = "double_coding_samples"
+    __table_args__ = (UniqueConstraint("video_id", "stage", name="uq_double_coding_sample"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), nullable=False)
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id"), nullable=False)
+    stage: Mapped[str] = mapped_column(String(20), nullable=False)  # "screening" | "coding"
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Audit log
 # ---------------------------------------------------------------------------
 
