@@ -5,6 +5,7 @@ import streamlit as st
 from components.navigation import page_header, render_context_sidebar
 from db import crud
 from db.database import get_session
+from services import screening_service
 from services.youtube_api import api_key_configured
 
 db = get_session()
@@ -32,7 +33,7 @@ if current_study is None:
     )
 else:
     st.subheader(f"Current study: {current_study.name}")
-    cols = st.columns(5)
+    cols = st.columns(4)
     cols[0].metric("Status", current_study.search_status)
     query_count = len(crud.list_search_queries(db, current_study.id))
     active_count = len(crud.list_search_queries(db, current_study.id, active_only=True))
@@ -40,8 +41,15 @@ else:
     cols[2].metric("Active queries", active_count)
     pilot_runs = crud.list_pilot_search_runs(db, current_study.id)
     cols[3].metric("Pilot runs", len(pilot_runs))
+
     unique_videos = crud.list_videos(db, current_study.id)
-    cols[4].metric("Unique videos", len(unique_videos))
+    decisions = crud.list_screening_decisions(db, current_study.id)
+    screening_progress = screening_service.compute_progress(unique_videos, decisions)
+    cols2 = st.columns(4)
+    cols2[0].metric("Unique videos", screening_progress.total)
+    cols2[1].metric("Screened", screening_progress.total - screening_progress.not_screened)
+    cols2[2].metric("Included", screening_progress.included)
+    cols2[3].metric("Excluded", screening_progress.excluded)
 
     if current_study.description:
         st.write(current_study.description)
@@ -53,7 +61,8 @@ st.markdown(
 2. **Search strategy** — build the reproducible query set.
 3. **Pilot search** — test queries on a small sample, rate relevance, refine, approve.
 4. **Full search results** — run the approved strategy at scale, deduplicate into the master video list.
-5. *Screening → Video coding → Accuracy assessment → Dashboard → Export* — later phases.
+5. **Screening** — include/exclude/unsure each unique video, with reasons and notes.
+6. *Video coding → Accuracy assessment → Dashboard → Export* — later phases.
     """
 )
 

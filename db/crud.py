@@ -17,6 +17,7 @@ from db.models import (
     PilotSearchResult,
     PilotSearchRun,
     Reviewer,
+    ScreeningDecision,
     SearchQuery,
     SearchResultRaw,
     SearchStrategyApproval,
@@ -423,3 +424,77 @@ def list_videos(db: Session, study_id: int) -> list[Video]:
 
 def get_video(db: Session, video_pk: int) -> Video | None:
     return db.get(Video, video_pk)
+
+
+def list_raw_results_for_video(db: Session, study_id: int, video_id: str) -> list[SearchResultRaw]:
+    """All raw search-result occurrences (across queries/runs) for one YouTube video."""
+    stmt = (
+        select(SearchResultRaw)
+        .join(FullSearchRun, SearchResultRaw.full_search_run_id == FullSearchRun.id)
+        .where(FullSearchRun.study_id == study_id, SearchResultRaw.video_id == video_id)
+        .order_by(SearchResultRaw.result_rank)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Screening decisions (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+def get_screening_decision(db: Session, video_pk: int) -> ScreeningDecision | None:
+    stmt = select(ScreeningDecision).where(ScreeningDecision.video_id == video_pk)
+    return db.execute(stmt).scalars().first()
+
+
+def list_screening_decisions(db: Session, study_id: int) -> dict[int, ScreeningDecision]:
+    """video_id (PK) -> its screening decision, for batch status lookups."""
+    stmt = select(ScreeningDecision).where(ScreeningDecision.study_id == study_id)
+    rows = db.execute(stmt).scalars().all()
+    return {row.video_id: row for row in rows}
+
+
+def upsert_screening_decision(
+    db: Session,
+    study_id: int,
+    video_pk: int,
+    reviewer_id: int | None,
+    decision: str,
+    exclusion_reason: str | None,
+    notes: str | None,
+) -> ScreeningDecision:
+    """One screening decision per video: create on first save, otherwise edit
+    it in place (screened_at is preserved from the first save; updated_at
+    tracks the latest edit via the model's onupdate)."""
+    existing = get_screening_decision(db, video_pk)
+    if existing is None:
+        existing = ScreeningDecision(
+            study_id=study_id,
+            video_id=video_pk,
+            reviewer_id=reviewer_id,
+            decision=decision,
+            exclusion_reason=exclusion_reason if decision == "Exclude" else None,
+            notes=notes,
+            screened_at=utcnow(),
+        )
+        db.add(existing)
+        action = "screening_decision_created"
+    else:
+        existing.reviewer_id = reviewer_id
+        existing.decision = decision
+        existing.exclusion_reason = exclusion_reason if decision == "Exclude" else None
+        existing.notes = notes
+        action = "screening_decision_edited"
+
+    db.commit()
+    db.refresh(existing)
+    log_audit_event(
+        db,
+        action,
+        "screening_decision",
+        existing.id,
+        study_id=study_id,
+        reviewer_id=reviewer_id,
+        details={"video_id": video_pk, "decision": decision},
+    )
+    return existing
