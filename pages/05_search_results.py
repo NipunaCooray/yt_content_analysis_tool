@@ -6,7 +6,7 @@ import streamlit as st
 from components.navigation import page_header, render_context_sidebar, require_study
 from db import crud
 from db.database import get_session
-from services import screening_service, search_service
+from services import coding_service, screening_service, search_service
 from services.deduplication import best_rank_per_video, queries_per_video
 from services.youtube_api import api_key_configured, estimate_search_calls
 from utils.constants import SEARCH_ORDER_OPTIONS
@@ -178,6 +178,7 @@ with tab_unique:
         q_per_video = queries_per_video(raw_results)
         best_rank = best_rank_per_video(raw_results)
         decisions = crud.list_screening_decisions(db, study_id)
+        codings = crud.list_video_codings(db, study_id)
         unique_df = pd.DataFrame(
             [
                 {
@@ -189,9 +190,7 @@ with tab_unique:
                     "Queries found by": len(q_per_video.get(v.video_id, set())),
                     "Best rank": best_rank.get(v.video_id),
                     "Screening status": screening_service.screening_status(decisions.get(v.id)),
-                    # Coding tables are built in Phase 5; every video starts
-                    # in this default state until then.
-                    "Coding status": "Not started",
+                    "Coding status": coding_service.coding_status(codings.get(v.id)),
                     "Video URL": v.video_url,
                 }
                 for v in videos

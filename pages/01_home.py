@@ -5,7 +5,7 @@ import streamlit as st
 from components.navigation import page_header, render_context_sidebar
 from db import crud
 from db.database import get_session
-from services import screening_service
+from services import coding_service, screening_service
 from services.youtube_api import api_key_configured
 
 db = get_session()
@@ -51,6 +51,15 @@ else:
     cols2[2].metric("Included", screening_progress.included)
     cols2[3].metric("Excluded", screening_progress.excluded)
 
+    included_videos = crud.list_included_videos(db, current_study.id)
+    codings = crud.list_video_codings(db, current_study.id)
+    coding_progress = coding_service.compute_progress([v.id for v in included_videos], codings)
+    cols3 = st.columns(4)
+    cols3[0].metric("Included videos", coding_progress.total)
+    cols3[1].metric("Coding not started", coding_progress.not_started)
+    cols3[2].metric("Coding in progress", coding_progress.in_progress)
+    cols3[3].metric("Coding complete", coding_progress.complete)
+
     if current_study.description:
         st.write(current_study.description)
 
@@ -62,7 +71,8 @@ st.markdown(
 3. **Pilot search** — test queries on a small sample, rate relevance, refine, approve.
 4. **Full search results** — run the approved strategy at scale, deduplicate into the master video list.
 5. **Screening** — include/exclude/unsure each unique video, with reasons and notes.
-6. *Video coding → Accuracy assessment → Dashboard → Export* — later phases.
+6. **Video coding** — characteristics, information coverage, older-adult needs, presentation.
+7. *Accuracy assessment → Dashboard → Export* — later phases.
     """
 )
 

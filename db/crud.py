@@ -14,8 +14,11 @@ from sqlalchemy.orm import Session
 from db.models import (
     AuditLog,
     FullSearchRun,
+    InformationDomainCode,
+    OlderAdultNeedCode,
     PilotSearchResult,
     PilotSearchRun,
+    PresentationCode,
     Reviewer,
     ScreeningDecision,
     SearchQuery,
@@ -23,6 +26,7 @@ from db.models import (
     SearchStrategyApproval,
     Study,
     Video,
+    VideoCoding,
     utcnow,
 )
 
@@ -426,6 +430,18 @@ def get_video(db: Session, video_pk: int) -> Video | None:
     return db.get(Video, video_pk)
 
 
+def list_included_videos(db: Session, study_id: int) -> list[Video]:
+    """Videos with a screening decision of 'Include' -- the only ones that
+    enter the coding workflow (handover doc section 14)."""
+    stmt = (
+        select(Video)
+        .join(ScreeningDecision, ScreeningDecision.video_id == Video.id)
+        .where(Video.study_id == study_id, ScreeningDecision.decision == "Include")
+        .order_by(Video.created_at)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
 def list_raw_results_for_video(db: Session, study_id: int, video_id: str) -> list[SearchResultRaw]:
     """All raw search-result occurrences (across queries/runs) for one YouTube video."""
     stmt = (
@@ -497,4 +513,146 @@ def upsert_screening_decision(
         reviewer_id=reviewer_id,
         details={"video_id": video_pk, "decision": decision},
     )
+    return existing
+
+
+# ---------------------------------------------------------------------------
+# Video coding (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def get_video_coding(db: Session, video_pk: int) -> VideoCoding | None:
+    stmt = select(VideoCoding).where(VideoCoding.video_id == video_pk)
+    return db.execute(stmt).scalars().first()
+
+
+def list_video_codings(db: Session, study_id: int) -> dict[int, VideoCoding]:
+    """video_id (PK) -> its coding record, for batch status lookups."""
+    stmt = select(VideoCoding).where(VideoCoding.study_id == study_id)
+    rows = db.execute(stmt).scalars().all()
+    return {row.video_id: row for row in rows}
+
+
+def upsert_video_coding(
+    db: Session,
+    study_id: int,
+    video_pk: int,
+    reviewer_id: int | None,
+    transport_modes: list[str],
+    jurisdictions: list[str],
+    uploader_type: str | None,
+    intended_audience: str | None,
+    older_adult_targeted: str | None,
+    notes: str | None,
+    status: str,
+) -> VideoCoding:
+    """One coding record per video: create on first save, otherwise edit it
+    in place (coded_at is preserved from the first save)."""
+    existing = get_video_coding(db, video_pk)
+    if existing is None:
+        existing = VideoCoding(
+            study_id=study_id,
+            video_id=video_pk,
+            reviewer_id=reviewer_id,
+            transport_modes_json=transport_modes,
+            jurisdictions_json=jurisdictions,
+            uploader_type=uploader_type,
+            intended_audience=intended_audience,
+            older_adult_targeted=older_adult_targeted,
+            notes=notes,
+            status=status,
+            coded_at=utcnow(),
+        )
+        db.add(existing)
+        db.flush()  # assign existing.id for the sub-table upserts that follow
+        action = "video_coding_created"
+    else:
+        existing.reviewer_id = reviewer_id
+        existing.transport_modes_json = transport_modes
+        existing.jurisdictions_json = jurisdictions
+        existing.uploader_type = uploader_type
+        existing.intended_audience = intended_audience
+        existing.older_adult_targeted = older_adult_targeted
+        existing.notes = notes
+        existing.status = status
+        action = "video_coding_edited"
+
+    log_audit_event(
+        db, action, "video_coding", None, study_id=study_id, reviewer_id=reviewer_id,
+        details={"video_id": video_pk, "status": status},
+    )
+    return existing
+
+
+def list_information_domain_codes(db: Session, video_coding_id: int) -> dict[str, InformationDomainCode]:
+    stmt = select(InformationDomainCode).where(
+        InformationDomainCode.video_coding_id == video_coding_id
+    )
+    return {row.domain_name: row for row in db.execute(stmt).scalars().all()}
+
+
+def upsert_information_domain_code(
+    db: Session, video_coding_id: int, domain_name: str, value: str, notes: str | None
+) -> InformationDomainCode:
+    stmt = select(InformationDomainCode).where(
+        InformationDomainCode.video_coding_id == video_coding_id,
+        InformationDomainCode.domain_name == domain_name,
+    )
+    existing = db.execute(stmt).scalars().first()
+    if existing is None:
+        existing = InformationDomainCode(
+            video_coding_id=video_coding_id, domain_name=domain_name, value=value, notes=notes
+        )
+        db.add(existing)
+    else:
+        existing.value = value
+        existing.notes = notes
+    return existing
+
+
+def list_older_adult_need_codes(db: Session, video_coding_id: int) -> dict[str, OlderAdultNeedCode]:
+    stmt = select(OlderAdultNeedCode).where(OlderAdultNeedCode.video_coding_id == video_coding_id)
+    return {row.need_name: row for row in db.execute(stmt).scalars().all()}
+
+
+def upsert_older_adult_need_code(
+    db: Session, video_coding_id: int, need_name: str, value: str, notes: str | None
+) -> OlderAdultNeedCode:
+    stmt = select(OlderAdultNeedCode).where(
+        OlderAdultNeedCode.video_coding_id == video_coding_id,
+        OlderAdultNeedCode.need_name == need_name,
+    )
+    existing = db.execute(stmt).scalars().first()
+    if existing is None:
+        existing = OlderAdultNeedCode(
+            video_coding_id=video_coding_id, need_name=need_name, value=value, notes=notes
+        )
+        db.add(existing)
+    else:
+        existing.value = value
+        existing.notes = notes
+    return existing
+
+
+def list_presentation_codes(db: Session, video_coding_id: int) -> dict[str, PresentationCode]:
+    stmt = select(PresentationCode).where(PresentationCode.video_coding_id == video_coding_id)
+    return {row.item_name: row for row in db.execute(stmt).scalars().all()}
+
+
+def upsert_presentation_code(
+    db: Session, video_coding_id: int, item_name: str, value: str, notes: str | None
+) -> PresentationCode:
+    stmt = select(PresentationCode).where(
+        PresentationCode.video_coding_id == video_coding_id,
+        PresentationCode.item_name == item_name,
+    )
+    existing = db.execute(stmt).scalars().first()
+    if existing is None:
+        existing = PresentationCode(
+            video_coding_id=video_coding_id, item_name=item_name, value=value, notes=notes
+        )
+        db.add(existing)
+    else:
+        existing.value = value
+        existing.notes = notes
     return existing
