@@ -30,6 +30,7 @@ current_study, current_reviewer = render_context_sidebar(db)
 page_header("Dashboard", "Study progress counters and descriptive charts.")
 
 if not require_study(current_study):
+    db.close()
     st.stop()
 
 study_id = current_study.id

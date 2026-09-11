@@ -14,6 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from db.models import Base
 
@@ -36,7 +37,19 @@ def get_engine_url() -> str:
     return f"sqlite:///{db_path}"
 
 
-_engine = create_engine(get_engine_url(), connect_args={"check_same_thread": False})
+_engine = create_engine(
+    get_engine_url(),
+    connect_args={"check_same_thread": False},
+    # NullPool instead of the default QueuePool: each Streamlit page rerun opens
+    # its own short-lived session, and Streamlit's frequent reruns (plus
+    # st.stop() calls that can skip an explicit db.close()) make it easy to
+    # exceed a fixed-size pool -- which then blocks every user with a
+    # QueuePool timeout. NullPool opens/closes a real SQLite connection per
+    # checkout instead of queuing a bounded set, so there's no shared limit to
+    # exhaust. SQLite doesn't benefit from pooling the way a network database
+    # does, so this has no real downside here.
+    poolclass=NullPool,
+)
 
 
 @event.listens_for(_engine, "connect")

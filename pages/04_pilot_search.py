@@ -20,6 +20,7 @@ page_header(
 )
 
 if not require_study(current_study):
+    db.close()
     st.stop()
 
 study_id = current_study.id

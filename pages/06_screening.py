@@ -23,6 +23,7 @@ current_study, current_reviewer = render_context_sidebar(db)
 page_header("Screening", "Determine which unique videos are eligible for content analysis.")
 
 if not require_study(current_study):
+    db.close()
     st.stop()
 
 if current_reviewer is None:

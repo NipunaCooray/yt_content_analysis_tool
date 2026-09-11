@@ -19,6 +19,7 @@ current_study, current_reviewer = render_context_sidebar(db)
 page_header("Full search results", "Run the approved search strategy and preserve all results.")
 
 if not require_study(current_study):
+    db.close()
     st.stop()
 
 study_id = current_study.id

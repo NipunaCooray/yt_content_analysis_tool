@@ -15,6 +15,7 @@ current_study, current_reviewer = render_context_sidebar(db)
 page_header("Search strategy", "Define the reproducible set of search queries for this study.")
 
 if not require_study(current_study):
+    db.close()
     st.stop()
 
 study_id = current_study.id

@@ -38,6 +38,7 @@ page_header(
 )
 
 if not require_study(current_study):
+    db.close()
     st.stop()
 
 if current_reviewer is None:
