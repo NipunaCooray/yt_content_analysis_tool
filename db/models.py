@@ -14,6 +14,7 @@ import datetime
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -51,6 +52,13 @@ class Study(Base):
     default_results_per_query: Mapped[int] = mapped_column(Integer, default=10)
     search_order: Mapped[str] = mapped_column(String(50), default="relevance")
     search_status: Mapped[str] = mapped_column(String(50), default="Draft")
+    # Publication-date filter for pilot/full search (added; see the publication
+    # date filter feature). Kept as persistent study defaults, mirroring
+    # default_results_per_query/search_order above, so "Approve search
+    # strategy" has a stable value to snapshot -- see pilot_service.
+    publication_filter_type: Mapped[str] = mapped_column(String(20), default="all_time")
+    published_after: Mapped[datetime.date | None] = mapped_column(Date)
+    published_before: Mapped[datetime.date | None] = mapped_column(Date)
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(

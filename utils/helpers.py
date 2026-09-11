@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime
+
+from utils.constants import (
+    PUBLICATION_FILTER_AFTER,
+    PUBLICATION_FILTER_BEFORE,
+    PUBLICATION_FILTER_BETWEEN,
+    PUBLICATION_PERIOD_LABELS,
+)
 
 
 def parse_iso8601_duration(duration: str | None) -> int | None:
@@ -64,3 +71,40 @@ def safe_percentage(numerator: int, denominator: int) -> float | None:
     if not denominator:
         return None
     return round((numerator / denominator) * 100, 1)
+
+
+def publication_date_api_params(
+    filter_type: str, published_after: date | None, published_before: date | None
+) -> dict[str, str]:
+    """Build the publishedAfter/publishedBefore kwargs for search.list from a
+    publication-date filter selection. Returns {} for "all time" or when a
+    required date is missing (validation is the caller's job -- see
+    utils.validators.validate_publication_date_filter)."""
+    params: dict[str, str] = {}
+    if filter_type == PUBLICATION_FILTER_AFTER and published_after:
+        params["published_after"] = f"{published_after.isoformat()}T00:00:00Z"
+    elif filter_type == PUBLICATION_FILTER_BEFORE and published_before:
+        params["published_before"] = f"{published_before.isoformat()}T23:59:59Z"
+    elif filter_type == PUBLICATION_FILTER_BETWEEN and published_after and published_before:
+        params["published_after"] = f"{published_after.isoformat()}T00:00:00Z"
+        params["published_before"] = f"{published_before.isoformat()}T23:59:59Z"
+    return params
+
+
+def _format_date(d: date) -> str:
+    # Portable day-of-month without a leading zero (strftime's "%-d"/"%e"
+    # aren't consistent across platforms).
+    return d.strftime("%d %b %Y").lstrip("0")
+
+
+def format_publication_period_label(
+    filter_type: str, published_after: date | None, published_before: date | None
+) -> str:
+    """e.g. 'All time' / 'After 1 Jan 2020' / '1 Jan 2020 - 31 Dec 2025'."""
+    if filter_type == PUBLICATION_FILTER_AFTER and published_after:
+        return f"After {_format_date(published_after)}"
+    if filter_type == PUBLICATION_FILTER_BEFORE and published_before:
+        return f"Before {_format_date(published_before)}"
+    if filter_type == PUBLICATION_FILTER_BETWEEN and published_after and published_before:
+        return f"{_format_date(published_after)} - {_format_date(published_before)}"
+    return PUBLICATION_PERIOD_LABELS.get(filter_type, "All time")

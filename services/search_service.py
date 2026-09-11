@@ -6,6 +6,7 @@ deduplicated master video list. See handover doc section 12.
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
@@ -14,6 +15,8 @@ from db import crud
 from db.models import SearchQuery
 from services import youtube_api
 from services.deduplication import DeduplicationOutcome, deduplicate_and_enrich
+from utils.constants import PUBLICATION_FILTER_ALL_TIME
+from utils.helpers import publication_date_api_params
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -38,12 +41,20 @@ def run_full_search(
     notes: str | None = None,
     region_code: str = "AU",
     relevance_language: str = "en",
+    publication_filter_type: str = PUBLICATION_FILTER_ALL_TIME,
+    published_after: datetime.date | None = None,
+    published_before: datetime.date | None = None,
 ) -> FullSearchOutcome:
     """
     Execute the (approved) search strategy across the given queries and
     persist a new FullSearchRun + SearchResultRaw rows, then refresh the
     deduplicated video master list. Never overwrites prior runs' raw data.
+
+    The publication-date filter is a filter on the search, not a sort --
+    `search_order` is applied independently, same as ever.
     """
+    date_params = publication_date_api_params(publication_filter_type, published_after, published_before)
+
     run = crud.create_full_search_run(
         db,
         study_id=study_id,
@@ -54,6 +65,9 @@ def run_full_search(
             "region_code": region_code,
             "relevance_language": relevance_language,
             "query_ids": [q.id for q in queries],
+            "publication_filter_type": publication_filter_type,
+            "published_after": published_after.isoformat() if published_after else None,
+            "published_before": published_before.isoformat() if published_before else None,
         },
         notes=notes,
     )
@@ -68,6 +82,7 @@ def run_full_search(
                 order=search_order,
                 region_code=region_code,
                 relevance_language=relevance_language,
+                **date_params,
             )
         except youtube_api.YouTubeAPIError as exc:
             msg = f"Query '{query.query_text}': {exc}"

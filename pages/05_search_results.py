@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime
+
 import pandas as pd
 import streamlit as st
 
@@ -9,7 +11,16 @@ from db.database import get_session
 from services import coding_service, screening_service, search_service
 from services.deduplication import best_rank_per_video, queries_per_video
 from services.youtube_api import api_key_configured, estimate_search_calls
-from utils.constants import SEARCH_ORDER_OPTIONS
+from utils.constants import (
+    PUBLICATION_FILTER_AFTER,
+    PUBLICATION_FILTER_BEFORE,
+    PUBLICATION_FILTER_BETWEEN,
+    PUBLICATION_PERIOD_LABELS,
+    PUBLICATION_PERIOD_OPTIONS,
+    SEARCH_ORDER_OPTIONS,
+)
+from utils.helpers import format_publication_period_label
+from utils.validators import validate_publication_date_filter
 
 LARGE_RUN_CALL_THRESHOLD = 20
 
@@ -82,6 +93,35 @@ with st.expander("Run full search", expanded=not crud.list_full_search_runs(db, 
             if current_study.search_order in SEARCH_ORDER_OPTIONS
             else 0,
         )
+
+        st.markdown("**Publication period**")
+        pub_filter_type = st.selectbox(
+            "Publication period",
+            PUBLICATION_PERIOD_OPTIONS,
+            index=PUBLICATION_PERIOD_OPTIONS.index(current_study.publication_filter_type)
+            if current_study.publication_filter_type in PUBLICATION_PERIOD_OPTIONS
+            else 0,
+            format_func=lambda code: PUBLICATION_PERIOD_LABELS[code],
+            label_visibility="collapsed",
+        )
+        pub_after = pub_before = None
+        if pub_filter_type == PUBLICATION_FILTER_AFTER:
+            pub_after = st.date_input("Published after", value=current_study.published_after)
+        elif pub_filter_type == PUBLICATION_FILTER_BEFORE:
+            pub_before = st.date_input("Published before", value=current_study.published_before)
+        elif pub_filter_type == PUBLICATION_FILTER_BETWEEN:
+            date_col1, date_col2 = st.columns(2)
+            pub_after = date_col1.date_input("From", value=current_study.published_after)
+            pub_before = date_col2.date_input("To", value=current_study.published_before)
+
+        pub_errors = validate_publication_date_filter(pub_filter_type, pub_after, pub_before)
+        for e in pub_errors:
+            st.error(e)
+        st.caption(
+            f"Publication period: {format_publication_period_label(pub_filter_type, pub_after, pub_before)}. "
+            "This filters which videos are found; it does not change the sort order above."
+        )
+
         run_notes = st.text_input("Notes for this full search run (optional)")
 
         est_calls = estimate_search_calls(len(selected_ids), int(results_per_query))
@@ -97,7 +137,8 @@ with st.expander("Run full search", expanded=not crud.list_full_search_runs(db, 
             )
 
         if st.button(
-            "Run full search", type="primary", disabled=not selected_ids or not confirmed
+            "Run full search", type="primary",
+            disabled=not selected_ids or not confirmed or bool(pub_errors),
         ):
             queries_to_run = [q for q in active_queries if q.id in selected_ids]
             with st.spinner(f"Running full search across {len(queries_to_run)} quer(y/ies)..."):
@@ -109,7 +150,16 @@ with st.expander("Run full search", expanded=not crud.list_full_search_runs(db, 
                     search_order=search_order,
                     approval_id=latest_approval.id,
                     notes=run_notes or None,
+                    publication_filter_type=pub_filter_type,
+                    published_after=pub_after,
+                    published_before=pub_before,
                 )
+            crud.update_study(
+                db, study_id,
+                publication_filter_type=pub_filter_type,
+                published_after=pub_after,
+                published_before=pub_before,
+            )
             msg = (
                 f"Full search complete: {outcome.raw_results_saved} raw result(s) saved, "
                 f"{outcome.dedup.newly_created} new unique video(s) added "
@@ -200,6 +250,11 @@ with tab_unique:
         st.dataframe(unique_df, width="stretch", hide_index=True)
 
 with tab_log:
+    def _log_publication_period(params: dict) -> str:
+        after = datetime.date.fromisoformat(params["published_after"]) if params.get("published_after") else None
+        before = datetime.date.fromisoformat(params["published_before"]) if params.get("published_before") else None
+        return format_publication_period_label(params.get("publication_filter_type", "all_time"), after, before)
+
     log_df = pd.DataFrame(
         [
             {
@@ -207,6 +262,7 @@ with tab_log:
                 "Timestamp": r.run_timestamp,
                 "Results/query": (r.parameters_json or {}).get("results_per_query"),
                 "Order": (r.parameters_json or {}).get("search_order"),
+                "Publication period": _log_publication_period(r.parameters_json or {}),
                 "Queries": len((r.parameters_json or {}).get("query_ids", [])),
                 "Notes": r.notes,
             }

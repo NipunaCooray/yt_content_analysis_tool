@@ -107,12 +107,20 @@ def search_videos(
     order: str = "relevance",
     region_code: str | None = "AU",
     relevance_language: str | None = "en",
+    published_after: str | None = None,
+    published_before: str | None = None,
 ) -> list[SearchResultItem]:
     """Run search.list for a query and return normalised, ranked results.
 
     YouTube caps each search.list call at 50 results, so requests for more
     than that are paginated internally via nextPageToken (each page is a
     separate quota-consuming call -- see estimate_search_calls()).
+
+    published_after/published_before are full ISO-8601 UTC timestamps (e.g.
+    "2020-01-01T00:00:00Z") matching the YouTube API's own parameter format --
+    build them with utils.helpers.publication_date_api_params() rather than
+    passing a bare date. This is a filter on publication date, not a sort;
+    `order` is unaffected.
     """
     client = _build_client()
     results: list[SearchResultItem] = []
@@ -132,6 +140,10 @@ def search_videos(
                 request_kwargs["regionCode"] = region_code
             if relevance_language:
                 request_kwargs["relevanceLanguage"] = relevance_language
+            if published_after:
+                request_kwargs["publishedAfter"] = published_after
+            if published_before:
+                request_kwargs["publishedBefore"] = published_before
             if page_token:
                 request_kwargs["pageToken"] = page_token
 

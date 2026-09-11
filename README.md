@@ -18,6 +18,9 @@ export tool — not a general-purpose YouTube analytics dashboard.
   search-strategy approval
 - Full search: raw-result storage (never overwritten across runs), metadata enrichment, and
   deduplication into a master video list
+- Publication-date filtering (all time / after / before / between) on both pilot and full
+  search, as a filter independent of sort order; saved per run and as part of the approved
+  strategy
 - Screening: include/exclude/unsure decisions with reasons, notes, and filters
 - Video coding: characteristics, information-coverage, older-adult-needs, and presentation
   coding, gated to included videos

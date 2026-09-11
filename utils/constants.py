@@ -61,6 +61,21 @@ SEARCH_ORDER_OPTIONS = [
 
 PILOT_RESULT_COUNT_OPTIONS = [5, 10, 20]
 
+# Publication-date filter for search.list (search-run parameter, not a
+# coding vocabulary, but kept here with the other search-strategy constants).
+PUBLICATION_FILTER_ALL_TIME = "all_time"
+PUBLICATION_FILTER_AFTER = "after"
+PUBLICATION_FILTER_BEFORE = "before"
+PUBLICATION_FILTER_BETWEEN = "between"
+
+PUBLICATION_PERIOD_LABELS = {
+    PUBLICATION_FILTER_ALL_TIME: "All time",
+    PUBLICATION_FILTER_AFTER: "After a date",
+    PUBLICATION_FILTER_BEFORE: "Before a date",
+    PUBLICATION_FILTER_BETWEEN: "Between two dates",
+}
+PUBLICATION_PERIOD_OPTIONS = list(PUBLICATION_PERIOD_LABELS.keys())
+
 # ---------------------------------------------------------------------------
 # Pilot relevance assessment
 # ---------------------------------------------------------------------------

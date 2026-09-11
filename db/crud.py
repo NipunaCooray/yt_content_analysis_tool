@@ -6,6 +6,7 @@ in one place.
 
 from __future__ import annotations
 
+import datetime
 import random
 from typing import Any
 
@@ -39,6 +40,20 @@ from db.models import (
 # ---------------------------------------------------------------------------
 
 
+def _json_safe(value: Any) -> Any:
+    """Recursively convert values the stdlib JSON encoder can't handle (date/
+    datetime, mainly) so a caller logging an arbitrary field dict -- e.g.
+    update_study(..., published_after=some_date) -- never crashes the write
+    it's attached to just because audit logging couldn't serialize it."""
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 def log_audit_event(
     db: Session,
     action_type: str,
@@ -54,7 +69,7 @@ def log_audit_event(
         action_type=action_type,
         entity_type=entity_type,
         entity_id=entity_id,
-        details_json=details or {},
+        details_json=_json_safe(details) or {},
     )
     db.add(entry)
     db.commit()

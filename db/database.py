@@ -63,9 +63,40 @@ def _set_sqlite_pragma(dbapi_connection, _connection_record):
 SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False)
 
 
+# Lightweight, additive-only migrations for columns added to an existing
+# table after it may already have been created on someone's machine.
+# Base.metadata.create_all() only creates *missing tables* -- it never alters
+# an existing one -- so a brand new column on an existing model needs an
+# explicit, idempotent ALTER TABLE here. Keyed by table name; each value is
+# {column_name: column_ddl_fragment}. Safe to re-run on every startup.
+_COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
+    "studies": {
+        "publication_filter_type": "VARCHAR(20) DEFAULT 'all_time'",
+        "published_after": "DATE",
+        "published_before": "DATE",
+    },
+}
+
+
+def _apply_column_migrations() -> None:
+    with _engine.connect() as conn:
+        for table, columns in _COLUMN_MIGRATIONS.items():
+            existing = {
+                row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")
+            }
+            if not existing:
+                continue  # table doesn't exist yet -- create_all() will make it with all columns
+            for column, ddl in columns.items():
+                if column not in existing:
+                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        conn.commit()
+
+
 def init_db() -> None:
-    """Create all tables if they don't already exist."""
+    """Create all tables if they don't already exist, and apply any pending
+    additive column migrations to tables that already existed."""
     Base.metadata.create_all(_engine)
+    _apply_column_migrations()
 
 
 def get_session() -> Session:

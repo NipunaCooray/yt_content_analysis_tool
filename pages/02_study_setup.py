@@ -13,6 +13,7 @@ from utils.constants import (
     SEARCH_ORDER_OPTIONS,
     STUDY_SEARCH_STATUSES,
 )
+from utils.helpers import format_publication_period_label
 from utils.validators import validate_study_fields
 
 db = get_session()
@@ -68,6 +69,11 @@ with tab_list:
     else:
         for study in studies:
             with st.expander(f"{study.name}  —  {study.search_status}", expanded=False):
+                st.caption(
+                    "Publication period: "
+                    f"{format_publication_period_label(study.publication_filter_type, study.published_after, study.published_before)} "
+                    "(set on the Pilot search page)"
+                )
                 with st.form(f"edit_study_{study.id}"):
                     name = st.text_input("Study name*", value=study.name, key=f"name_{study.id}")
                     description = st.text_area(

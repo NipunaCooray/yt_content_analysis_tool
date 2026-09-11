@@ -43,6 +43,9 @@ def studies_df(db: Session, study_id: int) -> pd.DataFrame:
         "default_results_per_query": study.default_results_per_query,
         "search_order": study.search_order,
         "search_status": study.search_status,
+        "publication_filter_type": study.publication_filter_type,
+        "published_after": study.published_after,
+        "published_before": study.published_before,
         "notes": study.notes,
         "created_at": study.created_at,
         "updated_at": study.updated_at,
@@ -70,6 +73,9 @@ def pilot_search_runs_df(db: Session, study_id: int) -> pd.DataFrame:
         "run_timestamp": r.run_timestamp,
         "results_per_query": r.results_per_query,
         "search_order": r.search_order,
+        "publication_filter_type": (r.parameters_json or {}).get("publication_filter_type"),
+        "published_after": (r.parameters_json or {}).get("published_after"),
+        "published_before": (r.parameters_json or {}).get("published_before"),
         "reviewer_id": r.reviewer_id,
         "notes": r.notes,
     } for r in rows])
@@ -105,6 +111,9 @@ def full_search_runs_df(db: Session, study_id: int) -> pd.DataFrame:
         "approval_id": r.approval_id,
         "results_per_query": (r.parameters_json or {}).get("results_per_query"),
         "search_order": (r.parameters_json or {}).get("search_order"),
+        "publication_filter_type": (r.parameters_json or {}).get("publication_filter_type"),
+        "published_after": (r.parameters_json or {}).get("published_after"),
+        "published_before": (r.parameters_json or {}).get("published_before"),
         "notes": r.notes,
     } for r in rows])
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime
+
 import pandas as pd
 import streamlit as st
 
@@ -9,7 +11,18 @@ from db import crud
 from db.database import get_session
 from services import pilot_service
 from services.youtube_api import api_key_configured, estimate_search_calls
-from utils.constants import IRRELEVANCE_REASONS, PILOT_RESULT_COUNT_OPTIONS, SEARCH_ORDER_OPTIONS
+from utils.constants import (
+    IRRELEVANCE_REASONS,
+    PILOT_RESULT_COUNT_OPTIONS,
+    PUBLICATION_FILTER_AFTER,
+    PUBLICATION_FILTER_BEFORE,
+    PUBLICATION_FILTER_BETWEEN,
+    PUBLICATION_PERIOD_LABELS,
+    PUBLICATION_PERIOD_OPTIONS,
+    SEARCH_ORDER_OPTIONS,
+)
+from utils.helpers import format_publication_period_label
+from utils.validators import validate_publication_date_filter
 
 db = get_session()
 current_study, current_reviewer = render_context_sidebar(db)
@@ -59,6 +72,35 @@ with st.expander("Run a new pilot search", expanded=not all_runs):
         search_order = col2.selectbox(
             "Search order", SEARCH_ORDER_OPTIONS, index=SEARCH_ORDER_OPTIONS.index("relevance")
         )
+
+        st.markdown("**Publication period**")
+        pub_filter_type = st.selectbox(
+            "Publication period",
+            PUBLICATION_PERIOD_OPTIONS,
+            index=PUBLICATION_PERIOD_OPTIONS.index(current_study.publication_filter_type)
+            if current_study.publication_filter_type in PUBLICATION_PERIOD_OPTIONS
+            else 0,
+            format_func=lambda code: PUBLICATION_PERIOD_LABELS[code],
+            label_visibility="collapsed",
+        )
+        pub_after = pub_before = None
+        if pub_filter_type == PUBLICATION_FILTER_AFTER:
+            pub_after = st.date_input("Published after", value=current_study.published_after)
+        elif pub_filter_type == PUBLICATION_FILTER_BEFORE:
+            pub_before = st.date_input("Published before", value=current_study.published_before)
+        elif pub_filter_type == PUBLICATION_FILTER_BETWEEN:
+            date_col1, date_col2 = st.columns(2)
+            pub_after = date_col1.date_input("From", value=current_study.published_after)
+            pub_before = date_col2.date_input("To", value=current_study.published_before)
+
+        pub_errors = validate_publication_date_filter(pub_filter_type, pub_after, pub_before)
+        for e in pub_errors:
+            st.error(e)
+        st.caption(
+            f"Publication period: {format_publication_period_label(pub_filter_type, pub_after, pub_before)}. "
+            "This filters which videos are found; it does not change the sort order above."
+        )
+
         run_notes = st.text_input("Notes for this pilot run (optional)")
 
         est_calls = estimate_search_calls(len(selected_ids), int(results_per_query))
@@ -67,7 +109,9 @@ with st.expander("Run a new pilot search", expanded=not all_runs):
             f"(~{est_calls * 100} search-quota units)."
         )
 
-        if st.button("Run pilot search", type="primary", disabled=not selected_ids):
+        if st.button(
+            "Run pilot search", type="primary", disabled=not selected_ids or bool(pub_errors)
+        ):
             queries_to_run = [q for q in active_queries if q.id in selected_ids]
             with st.spinner(f"Running pilot search across {len(queries_to_run)} quer(y/ies)..."):
                 outcome = pilot_service.run_pilot_search(
@@ -78,9 +122,20 @@ with st.expander("Run a new pilot search", expanded=not all_runs):
                     search_order=search_order,
                     reviewer_id=current_reviewer.id if current_reviewer else None,
                     notes=run_notes or None,
+                    publication_filter_type=pub_filter_type,
+                    published_after=pub_after,
+                    published_before=pub_before,
                 )
             if current_study.search_status == "Draft":
                 crud.update_study(db, study_id, search_status="Pilot testing")
+            # Keep the study's date filter in sync with whatever was just piloted,
+            # so "Approve search strategy" below reflects what was actually tested.
+            crud.update_study(
+                db, study_id,
+                publication_filter_type=pub_filter_type,
+                published_after=pub_after,
+                published_before=pub_before,
+            )
             st.session_state["pilot_run_id"] = outcome.run_id
             if outcome.errors:
                 st.warning(
@@ -121,6 +176,14 @@ st.session_state["pilot_run_id"] = selected_run_id
 selected_run = crud.get_pilot_search_run(db, selected_run_id)
 if selected_run.notes:
     st.caption(f"Notes: {selected_run.notes}")
+
+_run_params = selected_run.parameters_json or {}
+_run_after = datetime.date.fromisoformat(_run_params["published_after"]) if _run_params.get("published_after") else None
+_run_before = datetime.date.fromisoformat(_run_params["published_before"]) if _run_params.get("published_before") else None
+st.caption(
+    "Publication period: "
+    f"{format_publication_period_label(_run_params.get('publication_filter_type', 'all_time'), _run_after, _run_before)}"
+)
 
 # ---------------------------------------------------------------------------
 # Query performance summary
@@ -316,6 +379,12 @@ st.write(
     f"Approving will snapshot the **{len(active_queries)} currently active** quer(y/ies) "
     "and mark the study 'Ready for full search'."
 )
+st.caption(
+    "Publication period: "
+    f"**{format_publication_period_label(current_study.publication_filter_type, current_study.published_after, current_study.published_before)}** "
+    "(from the last pilot run above -- this is part of the approved strategy and the Full "
+    "search page will use it automatically)."
+)
 approve_notes = st.text_input("Approval notes (optional)", key="approve_notes")
 if st.button("✅ Approve search strategy", type="primary", disabled=not active_queries):
     pilot_service.approve_search_strategy(
@@ -325,6 +394,9 @@ if st.button("✅ Approve search strategy", type="primary", disabled=not active_
         results_per_query=current_study.default_results_per_query,
         search_order=current_study.search_order,
         notes=approve_notes or None,
+        publication_filter_type=current_study.publication_filter_type,
+        published_after=current_study.published_after,
+        published_before=current_study.published_before,
     )
     st.success("Search strategy approved. Study status set to 'Ready for full search'.")
     st.rerun()

@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 from db import crud
 from db.models import PilotSearchResult, SearchQuery
 from services import youtube_api
-from utils.helpers import safe_percentage
+from utils.constants import PUBLICATION_FILTER_ALL_TIME
+from utils.helpers import publication_date_api_params, safe_percentage
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -38,11 +39,20 @@ def run_pilot_search(
     notes: str | None = None,
     region_code: str = "AU",
     relevance_language: str = "en",
+    publication_filter_type: str = PUBLICATION_FILTER_ALL_TIME,
+    published_after: datetime.date | None = None,
+    published_before: datetime.date | None = None,
 ) -> PilotRunOutcome:
     """
     Execute a pilot search across the given queries and persist a new
     PilotSearchRun + PilotSearchResult rows. Never overwrites prior runs.
+
+    The publication-date filter uses the same logic the full search will use
+    (see search_service.run_full_search), so pilot results are representative
+    of what the full search will retrieve.
     """
+    date_params = publication_date_api_params(publication_filter_type, published_after, published_before)
+
     run = crud.create_pilot_search_run(
         db,
         study_id=study_id,
@@ -54,6 +64,9 @@ def run_pilot_search(
             "region_code": region_code,
             "relevance_language": relevance_language,
             "query_ids": [q.id for q in queries],
+            "publication_filter_type": publication_filter_type,
+            "published_after": published_after.isoformat() if published_after else None,
+            "published_before": published_before.isoformat() if published_before else None,
         },
     )
 
@@ -67,6 +80,7 @@ def run_pilot_search(
                 order=search_order,
                 region_code=region_code,
                 relevance_language=relevance_language,
+                **date_params,
             )
         except youtube_api.YouTubeAPIError as exc:
             msg = f"Query '{query.query_text}': {exc}"
@@ -180,8 +194,14 @@ def approve_search_strategy(
     results_per_query: int,
     search_order: str,
     notes: str | None = None,
+    publication_filter_type: str = PUBLICATION_FILTER_ALL_TIME,
+    published_after: datetime.date | None = None,
+    published_before: datetime.date | None = None,
 ) -> None:
-    """Snapshot the currently active query set and mark the study ready for full search."""
+    """Snapshot the currently active query set and mark the study ready for
+    full search. The publication-date filter is part of the approved
+    strategy, same as results_per_query/search_order -- the Full Search page
+    uses this snapshot's date filter automatically."""
     active_queries = crud.list_search_queries(db, study_id, active_only=True)
     snapshot = [
         {
@@ -197,7 +217,13 @@ def approve_search_strategy(
         study_id=study_id,
         reviewer_id=reviewer_id,
         query_snapshot_json=snapshot,
-        parameters_json={"results_per_query": results_per_query, "search_order": search_order},
+        parameters_json={
+            "results_per_query": results_per_query,
+            "search_order": search_order,
+            "publication_filter_type": publication_filter_type,
+            "published_after": published_after.isoformat() if published_after else None,
+            "published_before": published_before.isoformat() if published_before else None,
+        },
         notes=notes,
     )
     crud.update_study(db, study_id, search_status="Ready for full search")
