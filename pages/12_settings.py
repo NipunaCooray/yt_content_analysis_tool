@@ -5,7 +5,7 @@ import streamlit as st
 
 from components.caching import invalidate_reviewer_options
 from components.navigation import page_header, render_context_sidebar
-from db import crud
+from db import crud, region_probe
 from db.database import (
     get_database_info,
     get_database_path,
@@ -78,6 +78,59 @@ if st.button("Measure round-trip latency", help="Times 7 minimal queries on one 
                 f"40 queries would spend ~{forty_query_page_s:.1f}s waiting on the network "
                 "alone -- consider moving the database to the region the app runs in."
             )
+
+# If the latency above is high, this identifies which region to move to.
+# Streamlit Community Cloud doesn't document where it runs, so the only
+# reliable way to choose is to measure from inside the running app.
+with st.expander("Which region should the database be in?"):
+    st.caption(
+        "Times a bare TCP handshake from this app to every Supabase region. No "
+        "credentials are sent and no database is contacted -- it only measures "
+        "network distance, so the nearest region is the one to host the database in."
+    )
+    if st.button("Compare regions"):
+        with st.spinner("Probing all regions..."):
+            results = region_probe.probe_regions()
+            here = region_probe.configured_region()
+        reachable = [r for r in results if r["ok"]]
+        if not reachable:
+            st.error("Could not reach any region -- outbound connections may be blocked.")
+        else:
+            best = reachable[0]
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Region": r["label"],
+                            "Code": r["region"],
+                            "Round trip": f"{r['median_ms']} ms" if r["ok"] else f"({r['error']})",
+                            "": ("← in use" if r["region"] == here else ""),
+                        }
+                        for r in results
+                    ]
+                ),
+                width="stretch",
+                hide_index=True,
+            )
+            if here is None:
+                st.info(f"Nearest region: **{best['label']}** ({best['median_ms']} ms).")
+            elif here == best["region"]:
+                st.success(
+                    f"The database is already in the nearest region ({best['label']}, "
+                    f"{best['median_ms']} ms). Nothing to gain by moving it.",
+                    icon="✅",
+                )
+            else:
+                current = next((r for r in reachable if r["region"] == here), None)
+                if current:
+                    saved = current["median_ms"] - best["median_ms"]
+                    st.warning(
+                        f"The database is in **{current['label']}** ({current['median_ms']} ms), "
+                        f"but **{best['label']}** is {saved:.0f} ms closer "
+                        f"({best['median_ms']} ms). A page issuing 40 queries would spend "
+                        f"~{saved * 40 / 1000:.1f}s less waiting on the network.",
+                        icon="⚠️",
+                    )
 
 st.markdown("---")
 st.subheader("YouTube API key")
