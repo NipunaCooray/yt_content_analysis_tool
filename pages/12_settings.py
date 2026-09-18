@@ -6,7 +6,13 @@ import streamlit as st
 from components.caching import invalidate_reviewer_options
 from components.navigation import page_header, render_context_sidebar
 from db import crud
-from db.database import get_database_info, get_database_path, get_session, is_production
+from db.database import (
+    get_database_info,
+    get_database_path,
+    get_session,
+    is_production,
+    measure_round_trip_latency,
+)
 from services.youtube_api import api_key_configured
 from utils.validators import validate_reviewer_fields
 
@@ -36,6 +42,42 @@ if db_info["backend"] == "sqlite":
         )
 # Never display the connection string, host, username, or password here --
 # only whether the connection works and which database backend it is.
+
+# Round-trip latency: pages issue many small sequential queries, so this
+# number roughly sets how responsive the whole app feels. It's only
+# meaningful measured from where the app actually runs -- a local dev
+# machine far from the database reports a distance that the deployed app
+# never pays, so run this on the deployed app to get the real figure.
+if st.button("Measure round-trip latency", help="Times 7 minimal queries on one connection."):
+    with st.spinner("Measuring..."):
+        latency = measure_round_trip_latency()
+    if not latency["ok"]:
+        st.error(f"Could not measure latency: {latency['error']}")
+    else:
+        lc1, lc2, lc3 = st.columns(3)
+        lc1.metric("Median", f"{latency['median_ms']} ms")
+        lc2.metric("Fastest", f"{latency['min_ms']} ms")
+        lc3.metric("Slowest", f"{latency['max_ms']} ms")
+        median = latency["median_ms"]
+        if latency["backend"] == "sqlite":
+            st.caption("Local SQLite file -- no network involved, so this is disk/CPU only.")
+        elif median < 10:
+            st.caption(
+                f"~{median}ms per query: the app and database are effectively co-located. "
+                "Network distance is not a bottleneck here."
+            )
+        elif median < 60:
+            st.caption(
+                f"~{median}ms per query: same continent, different region or an extra network "
+                "hop. Acceptable, though a page making many queries will feel it."
+            )
+        else:
+            forty_query_page_s = median * 40 / 1000
+            st.caption(
+                f"~{median}ms per query: the app and database are far apart. A page issuing "
+                f"40 queries would spend ~{forty_query_page_s:.1f}s waiting on the network "
+                "alone -- consider moving the database to the region the app runs in."
+            )
 
 st.markdown("---")
 st.subheader("YouTube API key")

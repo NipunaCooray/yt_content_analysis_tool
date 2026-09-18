@@ -180,6 +180,51 @@ def get_database_info() -> dict:
         }
 
 
+def measure_round_trip_latency(samples: int = 7) -> dict:
+    """Median/min/max milliseconds for a minimal query round trip.
+
+    Why this exists: almost every page issues many small sequential queries,
+    so page responsiveness is roughly (number of queries x this number).
+    Crucially it has to be measured *from where the app actually runs* -- a
+    developer laptop in Australia sees ~210ms to a us-east-1 database purely
+    from physical distance, which says nothing about what the deployed app
+    on Streamlit Cloud experiences. Run this from the deployed Settings page
+    to get the number that actually matters (and to confirm the app and the
+    database really are co-located).
+
+    Reuses a single pooled connection on purpose: this measures per-query
+    round-trip time, not connection setup, because it's the per-query cost
+    that multiplies by the number of queries a page makes.
+    """
+    import statistics
+    import time
+
+    try:
+        engine = get_engine()
+    except ConfigurationError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        timings = []
+        with engine.connect() as conn:
+            conn.exec_driver_sql("SELECT 1")  # discard the first: warms the connection
+            for _ in range(max(1, samples)):
+                started = time.perf_counter()
+                conn.exec_driver_sql("SELECT 1")
+                timings.append((time.perf_counter() - started) * 1000)
+        return {
+            "ok": True,
+            "backend": _backend,
+            "samples": len(timings),
+            "median_ms": round(statistics.median(timings), 1),
+            "min_ms": round(min(timings), 1),
+            "max_ms": round(max(timings), 1),
+            "error": None,
+        }
+    except Exception as exc:  # noqa: BLE001 - same rationale as get_database_info
+        return {"ok": False, "error": f"{type(exc).__name__} (see server logs for detail)"}
+
+
 # ---------------------------------------------------------------------------
 # Additive-only column migrations for SQLite dev/test databases
 # ---------------------------------------------------------------------------
