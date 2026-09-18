@@ -71,6 +71,10 @@ def pilot_search_runs_df(db: Session, study_id: int) -> pd.DataFrame:
     return pd.DataFrame([{
         "id": r.id,
         "run_timestamp": r.run_timestamp,
+        "status": r.status,
+        "started_at": r.started_at,
+        "completed_at": r.completed_at,
+        "error_message": r.error_message,
         "results_per_query": r.results_per_query,
         "search_order": r.search_order,
         "publication_filter_type": (r.parameters_json or {}).get("publication_filter_type"),
@@ -108,6 +112,10 @@ def full_search_runs_df(db: Session, study_id: int) -> pd.DataFrame:
     return pd.DataFrame([{
         "id": r.id,
         "run_timestamp": r.run_timestamp,
+        "status": r.status,
+        "started_at": r.started_at,
+        "completed_at": r.completed_at,
+        "error_message": r.error_message,
         "approval_id": r.approval_id,
         "results_per_query": (r.parameters_json or {}).get("results_per_query"),
         "search_order": (r.parameters_json or {}).get("search_order"),

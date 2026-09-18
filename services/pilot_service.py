@@ -12,9 +12,15 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from db import crud
-from db.models import PilotSearchResult, SearchQuery
+from db.models import PilotSearchResult, SearchQuery, utcnow
 from services import youtube_api
-from utils.constants import PUBLICATION_FILTER_ALL_TIME
+from utils.constants import (
+    PUBLICATION_FILTER_ALL_TIME,
+    RUN_STATUS_COMPLETED,
+    RUN_STATUS_FAILED,
+    RUN_STATUS_PARTIAL,
+    RUN_STATUS_RUNNING,
+)
 from utils.helpers import publication_date_api_params, safe_percentage
 from utils.logging import get_logger
 
@@ -50,6 +56,15 @@ def run_pilot_search(
     The publication-date filter uses the same logic the full search will use
     (see search_service.run_full_search), so pilot results are representative
     of what the full search will retrieve.
+
+    A query's results are committed as soon as that query completes, not
+    batched until the whole run finishes -- so if something goes wrong
+    partway through (a crash, a Streamlit Cloud restart), the queries that
+    already succeeded stay saved rather than being lost with the rest of the
+    transaction. The run's `status` reflects what actually happened:
+    completed (all queries succeeded), partial (some did), or failed (none
+    did) -- durable in the database even if the process dies before this
+    function returns.
     """
     date_params = publication_date_api_params(publication_filter_type, published_after, published_before)
 
@@ -60,6 +75,8 @@ def run_pilot_search(
         search_order=search_order,
         reviewer_id=reviewer_id,
         notes=notes,
+        status=RUN_STATUS_RUNNING,
+        started_at=utcnow(),
         parameters_json={
             "region_code": region_code,
             "relevance_language": relevance_language,
@@ -105,8 +122,21 @@ def run_pilot_search(
                 raw_json=item.raw,
             )
             saved += 1
+        db.commit()  # persist this query's results now, not at the end of the whole run
 
-    db.commit()
+    if not errors:
+        final_status = RUN_STATUS_COMPLETED
+    elif saved > 0:
+        final_status = RUN_STATUS_PARTIAL
+    else:
+        final_status = RUN_STATUS_FAILED
+    crud.update_pilot_search_run(
+        db, run.id,
+        status=final_status,
+        completed_at=utcnow(),
+        error_message="; ".join(errors) if errors else None,
+    )
+
     return PilotRunOutcome(run_id=run.id, queries_run=len(queries), results_saved=saved, errors=errors)
 
 

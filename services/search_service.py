@@ -12,10 +12,16 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from db import crud
-from db.models import SearchQuery
+from db.models import SearchQuery, utcnow
 from services import youtube_api
 from services.deduplication import DeduplicationOutcome, deduplicate_and_enrich
-from utils.constants import PUBLICATION_FILTER_ALL_TIME
+from utils.constants import (
+    PUBLICATION_FILTER_ALL_TIME,
+    RUN_STATUS_COMPLETED,
+    RUN_STATUS_FAILED,
+    RUN_STATUS_PARTIAL,
+    RUN_STATUS_RUNNING,
+)
 from utils.helpers import publication_date_api_params
 from utils.logging import get_logger
 
@@ -52,6 +58,12 @@ def run_full_search(
 
     The publication-date filter is a filter on the search, not a sort --
     `search_order` is applied independently, same as ever.
+
+    A query's raw results are committed as soon as that query completes
+    (not batched until the whole run finishes), and the run's `status` is
+    updated as it progresses -- same durability rationale as
+    pilot_service.run_pilot_search: a crash or restart partway through
+    shouldn't lose the queries that already succeeded.
     """
     date_params = publication_date_api_params(publication_filter_type, published_after, published_before)
 
@@ -59,6 +71,8 @@ def run_full_search(
         db,
         study_id=study_id,
         approval_id=approval_id,
+        status=RUN_STATUS_RUNNING,
+        started_at=utcnow(),
         parameters_json={
             "results_per_query": results_per_query,
             "search_order": search_order,
@@ -105,11 +119,24 @@ def run_full_search(
                 raw_json=item.raw,
             )
             saved += 1
+        db.commit()  # persist this query's raw results now, not at the end of the whole run
 
-    db.commit()
+    if not errors:
+        final_status = RUN_STATUS_COMPLETED
+    elif saved > 0:
+        final_status = RUN_STATUS_PARTIAL
+    else:
+        final_status = RUN_STATUS_FAILED
+    crud.update_full_search_run(
+        db, run.id,
+        status=final_status,
+        completed_at=utcnow(),
+        error_message="; ".join(errors) if errors else None,
+    )
 
     dedup_outcome = deduplicate_and_enrich(db, study_id)
-    crud.update_study(db, study_id, search_status="Full search completed")
+    if saved > 0:
+        crud.update_study(db, study_id, search_status="Full search completed")
 
     return FullSearchOutcome(
         run_id=run.id,

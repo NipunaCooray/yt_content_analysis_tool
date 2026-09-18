@@ -157,8 +157,9 @@ if not all_runs:
     db.close()
     st.stop()
 
+_RUN_STATUS_ICONS = {"completed": "✅", "partial": "⚠️", "failed": "❌", "running": "⏳", "pending": "⏳"}
 run_options = {
-    r.id: f"Run #{r.id} — {r.run_timestamp:%Y-%m-%d %H:%M} "
+    r.id: f"{_RUN_STATUS_ICONS.get(r.status, '')} Run #{r.id} — {r.run_timestamp:%Y-%m-%d %H:%M} "
     f"({r.results_per_query}/query, order={r.search_order})"
     for r in all_runs
 }
@@ -174,6 +175,12 @@ selected_run_id = st.selectbox(
 )
 st.session_state["pilot_run_id"] = selected_run_id
 selected_run = crud.get_pilot_search_run(db, selected_run_id)
+if selected_run.status in ("partial", "failed"):
+    st.warning(
+        f"Run status: {selected_run.status}."
+        + (f" {selected_run.error_message}" if selected_run.error_message else ""),
+        icon="⚠️",
+    )
 if selected_run.notes:
     st.caption(f"Notes: {selected_run.notes}")
 

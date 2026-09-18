@@ -5,7 +5,7 @@ import streamlit as st
 
 from components.navigation import page_header, render_context_sidebar
 from db import crud
-from db.database import get_database_path, get_session
+from db.database import get_database_info, get_database_path, get_session, is_production
 from services.youtube_api import api_key_configured
 from utils.validators import validate_reviewer_fields
 
@@ -14,19 +14,41 @@ current_study, current_reviewer = render_context_sidebar(db)
 
 page_header("Settings", "API configuration, reviewers, and the audit trail.")
 
+st.subheader("Database")
+db_info = get_database_info()
+col_db1, col_db2 = st.columns(2)
+if db_info["connected"]:
+    col_db1.success(f"Connected ({db_info['backend']})", icon="✅")
+else:
+    col_db1.error("Not connected", icon="🚨")
+    if db_info["error"]:
+        st.caption(db_info["error"])
+col_db2.caption(f"Environment: **{'production' if is_production() else 'development'}**")
+if db_info["backend"] == "sqlite":
+    st.caption(f"Local SQLite file: `{get_database_path()}`")
+    if is_production():
+        st.warning(
+            "Running in production with SQLite. Research data on Streamlit Community Cloud's "
+            "local disk is not persistent -- set DATABASE_URL to a PostgreSQL connection "
+            "string before collecting real study data.",
+            icon="⚠️",
+        )
+# Never display the connection string, host, username, or password here --
+# only whether the connection works and which database backend it is.
+
+st.markdown("---")
 st.subheader("YouTube API key")
 if api_key_configured():
     st.success("YOUTUBE_API_KEY is configured.", icon="✅")
 else:
     st.error(
-        "No YouTube API key found. Create a `.env` file in the project root (copy from "
-        "`.env.example`) with:\n\n```\nYOUTUBE_API_KEY=your_key_here\n```\n\nThen restart "
-        "the Streamlit app. Get a key from the Google Cloud Console "
-        "(APIs & Services → Credentials) with the YouTube Data API v3 enabled.",
+        "No YouTube API key found. Locally, create a `.env` file in the project root (copy "
+        "from `.env.example`) with:\n\n```\nYOUTUBE_API_KEY=your_key_here\n```\n\nThen "
+        "restart the app. In Streamlit Community Cloud, set it under App -> Settings -> "
+        "Secrets instead. Get a key from the Google Cloud Console (APIs & Services -> "
+        "Credentials) with the YouTube Data API v3 enabled.",
         icon="🔑",
     )
-
-st.caption(f"Database file: `{get_database_path()}`")
 
 st.markdown("---")
 st.subheader("Reviewers")

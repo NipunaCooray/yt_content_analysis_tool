@@ -1,7 +1,7 @@
 .env
-data/*.db
-data/*.sqlite
-data/*.sqlite3
+*.db
+*.sqlite
+*.sqlite3
 __pycache__/
 *.pyc
 .venv/
@@ -10,6 +10,10 @@ venv/
 .pytest_cache/
 *.egg-info/
 .streamlit/secrets.toml
+
+# Research-data archives/exports -- never committed (may contain real study data).
+*_export/
+*_archive.zip
 
 # Auto-registered by Streamlit into the venv; local tooling only.
 .agents/

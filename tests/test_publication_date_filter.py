@@ -325,12 +325,15 @@ def test_update_study_with_date_field_does_not_crash_audit_log(db_session):
 def test_column_migration_adds_missing_columns_to_existing_table(tmp_path):
     import sqlite3
 
-    from db.database import _COLUMN_MIGRATIONS
+    from db.database import _apply_sqlite_column_migrations
     from sqlalchemy import create_engine
 
     db_path = tmp_path / "legacy.db"
 
-    # Simulate a pre-feature database: a studies table without the 3 new columns.
+    # Simulate a pre-feature database: a studies table without the 3 new
+    # columns, and none of the other tables (e.g. pilot_search_runs) that
+    # later migrations also target -- the real migration function must skip
+    # tables that don't exist yet rather than erroring.
     conn = sqlite3.connect(db_path)
     conn.execute(
         "CREATE TABLE studies (id INTEGER PRIMARY KEY, name VARCHAR(255) NOT NULL, "
@@ -341,13 +344,7 @@ def test_column_migration_adds_missing_columns_to_existing_table(tmp_path):
     conn.close()
 
     engine = create_engine(f"sqlite:///{db_path}")
-    with engine.connect() as conn:
-        for table, columns in _COLUMN_MIGRATIONS.items():
-            existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
-            for column, ddl in columns.items():
-                if column not in existing:
-                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
-        conn.commit()
+    _apply_sqlite_column_migrations(engine)
 
     with engine.connect() as conn:
         columns_after = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(studies)")}

@@ -9,16 +9,12 @@ handover doc section 10.
 from __future__ import annotations
 
 import math
-import os
 from dataclasses import dataclass, field
 from typing import Any
-
-from dotenv import load_dotenv
 
 from utils.helpers import parse_iso8601_duration, parse_youtube_datetime, thumbnail_url_from_snippet, video_url
 from utils.logging import get_logger
 
-load_dotenv()
 logger = get_logger(__name__)
 
 
@@ -48,7 +44,9 @@ class SearchResultItem:
 
 
 def get_api_key() -> str | None:
-    return os.getenv("YOUTUBE_API_KEY") or None
+    from db.database import get_secret  # local import: avoids a hard dependency for callers/tests
+
+    return get_secret("YOUTUBE_API_KEY") or None
 
 
 def api_key_configured() -> bool:

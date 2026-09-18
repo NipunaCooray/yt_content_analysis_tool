@@ -271,3 +271,15 @@ ACCURACY_VALUES = [
 # ---------------------------------------------------------------------------
 
 CODING_STATUSES = ["Not started", "In progress", "Complete"]
+
+# ---------------------------------------------------------------------------
+# Search-run durability (PostgreSQL migration): a PilotSearchRun/FullSearchRun
+# row is created as soon as the run starts and updated as it progresses, so
+# the audit trail survives a crash or Streamlit Cloud restart mid-run.
+# ---------------------------------------------------------------------------
+
+RUN_STATUS_PENDING = "pending"
+RUN_STATUS_RUNNING = "running"
+RUN_STATUS_COMPLETED = "completed"
+RUN_STATUS_FAILED = "failed"
+RUN_STATUS_PARTIAL = "partial"

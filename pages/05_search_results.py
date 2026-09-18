@@ -259,11 +259,13 @@ with tab_log:
         [
             {
                 "Run": r.id,
+                "Status": r.status,
                 "Timestamp": r.run_timestamp,
                 "Results/query": (r.parameters_json or {}).get("results_per_query"),
                 "Order": (r.parameters_json or {}).get("search_order"),
                 "Publication period": _log_publication_period(r.parameters_json or {}),
                 "Queries": len((r.parameters_json or {}).get("query_ids", [])),
+                "Error": r.error_message,
                 "Notes": r.notes,
             }
             for r in full_runs

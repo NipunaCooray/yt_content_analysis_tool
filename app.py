@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from db.database import init_db
+from db.database import ConfigurationError, init_db
 
 st.set_page_config(
     page_title="Transport Information Analysis Tool",
@@ -20,7 +20,14 @@ st.set_page_config(
     layout="wide",
 )
 
-init_db()
+try:
+    init_db()
+except ConfigurationError as exc:
+    # Production with no DATABASE_URL configured: stop here with a clean
+    # message rather than falling back to local SQLite (Streamlit Cloud's
+    # local disk isn't persistent) or showing a raw traceback.
+    st.error(f"⚠️ Configuration error: {exc}", icon="🚨")
+    st.stop()
 
 PAGES = [
     st.Page("pages/01_home.py", title="Home", icon="🏠", default=True),

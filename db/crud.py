@@ -292,6 +292,20 @@ def get_pilot_search_run(db: Session, run_id: int) -> PilotSearchRun | None:
     return db.get(PilotSearchRun, run_id)
 
 
+def update_pilot_search_run(db: Session, run_id: int, **fields: Any) -> PilotSearchRun | None:
+    """Used to advance a run's status (pending -> running -> completed/failed/
+    partial) as it progresses, so the record is durable even if the process
+    crashes mid-run -- see handover doc's PostgreSQL migration, section 14."""
+    run = db.get(PilotSearchRun, run_id)
+    if run is None:
+        return None
+    for key, value in fields.items():
+        setattr(run, key, value)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
 def add_pilot_search_result(db: Session, pilot_search_run_id: int, **fields: Any) -> PilotSearchResult:
     result = PilotSearchResult(pilot_search_run_id=pilot_search_run_id, **fields)
     db.add(result)
@@ -403,6 +417,18 @@ def list_full_search_runs(db: Session, study_id: int) -> list[FullSearchRun]:
 
 def get_full_search_run(db: Session, run_id: int) -> FullSearchRun | None:
     return db.get(FullSearchRun, run_id)
+
+
+def update_full_search_run(db: Session, run_id: int, **fields: Any) -> FullSearchRun | None:
+    """Same run-durability pattern as update_pilot_search_run above."""
+    run = db.get(FullSearchRun, run_id)
+    if run is None:
+        return None
+    for key, value in fields.items():
+        setattr(run, key, value)
+    db.commit()
+    db.refresh(run)
+    return run
 
 
 def add_search_result_raw(db: Session, full_search_run_id: int, **fields: Any) -> SearchResultRaw:

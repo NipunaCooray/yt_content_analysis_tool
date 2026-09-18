@@ -117,6 +117,13 @@ class PilotSearchRun(Base):
     parameters_json: Mapped[dict | None] = mapped_column(JSON)
     reviewer_id: Mapped[int | None] = mapped_column(ForeignKey("reviewers.id"))
     notes: Mapped[str | None] = mapped_column(Text)
+    # Run durability (added -- see the PostgreSQL migration): a row exists as
+    # soon as the run starts, so the audit trail survives a crash/restart
+    # mid-run rather than only appearing after every query succeeds.
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    started_at: Mapped[datetime.datetime | None] = mapped_column(DateTime)
+    completed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime)
+    error_message: Mapped[str | None] = mapped_column(Text)
 
     results: Mapped[list["PilotSearchResult"]] = relationship(
         back_populates="pilot_search_run", cascade="all, delete-orphan"
@@ -176,6 +183,11 @@ class FullSearchRun(Base):
     approval_id: Mapped[int | None] = mapped_column(ForeignKey("search_strategy_approvals.id"))
     parameters_json: Mapped[dict | None] = mapped_column(JSON)
     notes: Mapped[str | None] = mapped_column(Text)
+    # Run durability -- see PilotSearchRun above.
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    started_at: Mapped[datetime.datetime | None] = mapped_column(DateTime)
+    completed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime)
+    error_message: Mapped[str | None] = mapped_column(Text)
 
 
 class SearchResultRaw(Base):
