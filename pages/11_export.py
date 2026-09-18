@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from components.caching import cached_export_dataframe
 from components.navigation import page_header, render_context_sidebar, require_study
 from db.database import get_session
 from services import export_service
@@ -22,9 +23,17 @@ code = study_export_code(study_id)
 required_count = sum(1 for d in export_service.EXPORT_DATASETS if d.required)
 bonus_count = len(export_service.EXPORT_DATASETS) - required_count
 
+# Build every dataset's DataFrame exactly once (cached, short TTL -- see
+# components/caching.py) and reuse it for both the all-in-one ZIP and each
+# individual preview/download below, instead of building all 17 twice.
+dataframes = {
+    dataset.key: cached_export_dataframe(db, study_id, dataset.key)
+    for dataset in export_service.EXPORT_DATASETS
+}
+
 st.download_button(
     f"⬇ Download all {len(export_service.EXPORT_DATASETS)} datasets ({code}_all.zip)",
-    data=export_service.build_zip_export(db, study_id),
+    data=export_service.build_zip_export(db, study_id, dataframes=dataframes),
     file_name=f"{code}_all.zip",
     mime="application/zip",
     type="primary",
@@ -39,7 +48,7 @@ st.caption(
 st.markdown("---")
 
 for dataset in export_service.EXPORT_DATASETS:
-    df = export_service.build_dataframe(db, study_id, dataset)
+    df = dataframes[dataset.key]
     badge = "" if dataset.required else " 🎯"
     with st.expander(f"{dataset.label}{badge} — {len(df)} row{'s' if len(df) != 1 else ''}"):
         if df.empty:

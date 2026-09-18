@@ -11,22 +11,31 @@ from __future__ import annotations
 import streamlit as st
 from sqlalchemy.orm import Session
 
+from components.caching import cached_reviewer_options, cached_study_options
 from db import crud
 from db.models import Reviewer, Study
 
 
 def render_context_sidebar(db: Session) -> tuple[Study | None, Reviewer | None]:
-    """Render study + reviewer pickers in the sidebar and return the current selections."""
+    """Render study + reviewer pickers in the sidebar and return the current
+    selections.
+
+    Builds each dropdown's labels from a short-TTL cache (see
+    components/caching.py) instead of re-listing every study/reviewer on
+    every single page load, then does exactly one fresh, uncached
+    primary-key lookup for whichever one is actually selected -- never a
+    second full list-then-refetch round trip for the same data.
+    """
     st.sidebar.markdown("### Study")
-    studies = crud.list_studies(db)
+    study_rows = cached_study_options(db)
     current_study = None
-    if not studies:
+    if not study_rows:
         st.sidebar.info("No studies yet. Create one on the Study Setup page.")
     else:
-        options = {s.id: f"{s.name} ({s.search_status})" for s in studies}
-        default_id = st.session_state.get("current_study_id", studies[0].id)
+        options = {row["id"]: f"{row['name']} ({row['search_status']})" for row in study_rows}
+        default_id = st.session_state.get("current_study_id", study_rows[0]["id"])
         if default_id not in options:
-            default_id = studies[0].id
+            default_id = study_rows[0]["id"]
         selected_id = st.sidebar.selectbox(
             "Current study",
             options=list(options.keys()),
@@ -38,15 +47,15 @@ def render_context_sidebar(db: Session) -> tuple[Study | None, Reviewer | None]:
         current_study = crud.get_study(db, selected_id)
 
     st.sidebar.markdown("### Reviewer")
-    reviewers = crud.list_reviewers(db)
+    reviewer_rows = cached_reviewer_options(db)
     current_reviewer = None
-    if not reviewers:
+    if not reviewer_rows:
         st.sidebar.info("No reviewers yet. Add one on the Settings page.")
     else:
-        options = {r.id: f"{r.name} ({r.initials})" for r in reviewers}
-        default_id = st.session_state.get("current_reviewer_id", reviewers[0].id)
+        options = {row["id"]: f"{row['name']} ({row['initials']})" for row in reviewer_rows}
+        default_id = st.session_state.get("current_reviewer_id", reviewer_rows[0]["id"])
         if default_id not in options:
-            default_id = reviewers[0].id
+            default_id = reviewer_rows[0]["id"]
         selected_id = st.sidebar.selectbox(
             "Current reviewer",
             options=list(options.keys()),

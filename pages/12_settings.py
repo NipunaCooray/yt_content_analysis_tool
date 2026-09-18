@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from components.caching import invalidate_reviewer_options
 from components.navigation import page_header, render_context_sidebar
 from db import crud
 from db.database import get_database_info, get_database_path, get_session, is_production
@@ -70,6 +71,7 @@ with tab_add:
                 crud.create_reviewer(
                     db, name=name.strip(), initials=initials.strip(), email=email or None
                 )
+                invalidate_reviewer_options()
                 st.success(f"Reviewer '{name}' added.")
                 st.rerun()
 
@@ -104,10 +106,12 @@ with tab_list:
                                 initials=initials.strip(),
                                 email=email or None,
                             )
+                            invalidate_reviewer_options()
                             st.success("Reviewer updated.")
                             st.rerun()
                     if delete:
                         crud.delete_reviewer(db, reviewer.id)
+                        invalidate_reviewer_options()
                         st.warning("Reviewer deleted.")
                         st.rerun()
 

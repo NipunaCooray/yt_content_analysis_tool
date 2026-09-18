@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from components.caching import cached_export_dataframe
 from components.navigation import page_header, render_context_sidebar, require_study
 from db import crud
 from db.database import get_session
@@ -97,7 +98,7 @@ st.markdown("---")
 
 st.subheader("Coded video characteristics")
 
-char_df = export_service.video_characteristics_df(db, study_id)
+char_df = cached_export_dataframe(db, study_id, "video_characteristics")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -130,7 +131,7 @@ st.subheader("Information coverage & older-adult needs")
 col3, col4 = st.columns(2)
 with col3:
     st.caption("Information domains marked 'Present'")
-    info_df = export_service.information_domains_df(db, study_id)
+    info_df = cached_export_dataframe(db, study_id, "information_domains")
     if info_df.empty:
         st.caption("No information-coverage coding yet.")
     else:
@@ -139,7 +140,7 @@ with col3:
 
 with col4:
     st.caption("Older-adult needs marked 'Addressed'")
-    needs_df = export_service.older_adult_needs_df(db, study_id)
+    needs_df = cached_export_dataframe(db, study_id, "older_adult_needs")
     if needs_df.empty:
         st.caption("No older-adult-needs coding yet.")
     else:
@@ -152,7 +153,7 @@ st.subheader("Accuracy & screening")
 col5, col6 = st.columns(2)
 with col5:
     st.caption("Accuracy assessment distribution (claims)")
-    claims_df = export_service.accuracy_claims_df(db, study_id)
+    claims_df = cached_export_dataframe(db, study_id, "accuracy_claims")
     if claims_df.empty:
         st.caption("No accuracy claims recorded yet.")
     else:
@@ -160,7 +161,7 @@ with col5:
 
 with col6:
     st.caption("Screening exclusion reasons")
-    screening_df = export_service.screening_df(db, study_id)
+    screening_df = cached_export_dataframe(db, study_id, "screening")
     if screening_df.empty or screening_df["exclusion_reason"].dropna().empty:
         st.caption("No excluded videos yet.")
     else:

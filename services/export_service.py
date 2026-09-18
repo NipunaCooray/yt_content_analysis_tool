@@ -419,15 +419,23 @@ def to_json_bytes(df: pd.DataFrame) -> bytes:
     return df.to_json(orient="records", date_format="iso", indent=2).encode("utf-8")
 
 
-def build_zip_export(db: Session, study_id: int) -> bytes:
-    """All 14 datasets as CSVs bundled into one in-memory ZIP file."""
+def build_zip_export(
+    db: Session, study_id: int, dataframes: dict[str, pd.DataFrame] | None = None
+) -> bytes:
+    """All 14 datasets as CSVs bundled into one in-memory ZIP file.
+
+    `dataframes`, if given, is a {dataset.key: DataFrame} map of already-built
+    datasets (e.g. from the caller's own per-dataset cache) -- pass it to
+    avoid rebuilding every dataset a second time just for the ZIP, since the
+    Export page also renders each one as a preview.
+    """
     import io
     import zipfile
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for dataset in EXPORT_DATASETS:
-            df = build_dataframe(db, study_id, dataset)
+            df = dataframes[dataset.key] if dataframes is not None else build_dataframe(db, study_id, dataset)
             filename = export_filename(study_id, dataset, "csv")
             zf.writestr(filename, df.to_csv(index=False))
     return buffer.getvalue()
