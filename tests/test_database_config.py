@@ -8,19 +8,9 @@ import pytest
 
 from db.database import ConfigurationError, get_secret, is_production, resolve_database_url
 
-
-@pytest.fixture(autouse=True)
-def _no_streamlit_secrets(monkeypatch):
-    """get_secret() tries st.secrets first; force it to behave as if no
-    secrets.toml exists (raises), isolating these tests to the env-var path
-    regardless of whether this machine happens to have a local secrets file."""
-    import streamlit as st
-
-    class _NoSecrets:
-        def __contains__(self, _key):
-            raise FileNotFoundError("no secrets.toml in this test")
-
-    monkeypatch.setattr(st, "secrets", _NoSecrets())
+# Note: the autouse `_no_streamlit_secrets` fixture in conftest.py neutralizes
+# st.secrets for the whole suite, so these tests exercise the environment-
+# variable path regardless of what's in a developer's local secrets.toml.
 
 
 def test_get_secret_reads_env_var_when_no_streamlit_secret(monkeypatch):

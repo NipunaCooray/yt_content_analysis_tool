@@ -188,7 +188,11 @@ def create_search_query(db: Session, study_id: int, **fields: Any) -> SearchQuer
     return query
 
 
-def get_search_query(db: Session, query_id: int) -> SearchQuery | None:
+def get_search_query(db: Session, query_id: int | None) -> SearchQuery | None:
+    # query_id can be None on a pilot/raw result whose originating query was
+    # later deleted (ON DELETE SET NULL) -- the result itself is preserved.
+    if query_id is None:
+        return None
     return db.get(SearchQuery, query_id)
 
 
