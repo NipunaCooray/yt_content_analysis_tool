@@ -110,6 +110,7 @@ def resolve_database_url() -> str:
 _engine: Engine | None = None
 _backend: str | None = None
 _SessionLocal: sessionmaker | None = None
+_schema_ready: bool = False  # init_db() is a no-op after the first call
 
 
 def _build_engine(url: str) -> tuple[Engine, str]:
@@ -138,6 +139,19 @@ def _build_engine(url: str) -> tuple[Engine, str]:
             # Recycles connections that Supabase/the network has silently
             # dropped, rather than handing the caller a dead connection.
             pool_pre_ping=True,
+            # Pool geometry stated explicitly rather than left to SQLAlchemy's
+            # defaults, because Streamlit reruns the whole script on every
+            # interaction and each run checks out a connection. 5 + 10 keeps
+            # the ceiling under what Supabase's session pooler allows.
+            pool_size=5,
+            max_overflow=10,
+            # Default is 30s: an exhausted pool froze the UI for half a minute
+            # before raising. Failing in 10 surfaces the problem while it is
+            # still recognisable as "that action failed".
+            pool_timeout=10,
+            # Supabase's pooler drops connections that have sat idle; don't
+            # hand out one older than this even if pre-ping would pass.
+            pool_recycle=1800,
         )
 
     return engine, backend
@@ -269,20 +283,50 @@ def _apply_sqlite_column_migrations(engine: Engine) -> None:
         conn.commit()
 
 
-def init_db() -> None:
-    """Create all tables if they don't already exist.
+def _verify_postgres_schema(engine: Engine) -> None:
+    """Confirm Alembic has built the schema, in one query.
 
-    For SQLite (dev/test), also applies the additive column migrations above.
-    For PostgreSQL (production), schema changes beyond the very first deploy
-    should go through `alembic upgrade head` instead -- see alembic/ and the
-    README's deployment section. create_all() remains safe to call here too
-    (it only creates missing tables, never alters existing ones), which is
-    useful for bootstrapping a brand new, empty Postgres database.
+    Alembic owns the PostgreSQL schema -- create_all() must NOT run against it.
+    Besides costing a reflection query per table, create_all() never stamps
+    alembic_version, so a schema it created would make the next
+    `alembic upgrade head` fail trying to create tables that already exist.
     """
+    with engine.connect() as conn:
+        migrated = conn.exec_driver_sql(
+            "SELECT to_regclass('public.alembic_version') IS NOT NULL"
+        ).scalar()
+    if not migrated:
+        raise ConfigurationError(
+            "The database has no schema yet. Run `alembic upgrade head` against "
+            "DATABASE_URL before starting the app."
+        )
+
+
+def init_db() -> None:
+    """Prepare the schema once per process.
+
+    Deliberately does nothing after the first call. This runs at app.py module
+    level, so it executes on *every* Streamlit script run -- every page load and
+    every button click. It used to call create_all() each time, which against
+    PostgreSQL issued one reflection query per table (18 round trips, ~470ms at
+    the deployed app's latency) purely to rediscover that every table already
+    existed, holding a pooled connection throughout.
+
+    SQLite (dev/test) still gets create_all() plus the additive column
+    migrations above, since there is no Alembic history for local files.
+    PostgreSQL (production) is owned by Alembic and is only checked.
+    """
+    global _schema_ready
+    if _schema_ready:
+        return
+
     engine = get_engine()
-    Base.metadata.create_all(engine)
     if get_backend_name() == "sqlite":
+        Base.metadata.create_all(engine)
         _apply_sqlite_column_migrations(engine)
+    else:
+        _verify_postgres_schema(engine)
+    _schema_ready = True
 
 
 def get_session() -> Session:

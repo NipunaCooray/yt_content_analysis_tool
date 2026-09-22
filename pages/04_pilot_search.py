@@ -24,6 +24,10 @@ from utils.constants import (
 from utils.helpers import format_publication_period_label
 from utils.validators import validate_publication_date_filter
 
+# Session-scoped guard against two pilot runs overlapping -- see where it is
+# set below for why a second concurrent run is harmful.
+_PILOT_RUN_IN_PROGRESS = "pilot_search_in_progress"
+
 db = get_session()
 current_study, current_reviewer = render_context_sidebar(db)
 
@@ -112,31 +116,54 @@ with st.expander("Run a new pilot search", expanded=not all_runs):
         if st.button(
             "Run pilot search", type="primary", disabled=not selected_ids or bool(pub_errors)
         ):
+            # A pilot run holds its database connection for the whole search
+            # (one YouTube API call per query). Streamlit cannot interrupt a
+            # script that is blocked on the network, so clicking again starts a
+            # *concurrent* run holding a second connection. Enough repeats
+            # exhaust the pool, and then every page -- not just this one --
+            # fails on connection checkout. Refuse the second start instead.
+            if st.session_state.get(_PILOT_RUN_IN_PROGRESS):
+                st.warning(
+                    "A pilot search is already running in this session. Wait for it to "
+                    "finish before starting another.",
+                    icon="⏳",
+                )
+                st.stop()
+
+            st.session_state[_PILOT_RUN_IN_PROGRESS] = True
             queries_to_run = [q for q in active_queries if q.id in selected_ids]
-            with st.spinner(f"Running pilot search across {len(queries_to_run)} quer(y/ies)..."):
-                outcome = pilot_service.run_pilot_search(
-                    db,
-                    study_id=study_id,
-                    queries=queries_to_run,
-                    results_per_query=results_per_query,
-                    search_order=search_order,
-                    reviewer_id=current_reviewer.id if current_reviewer else None,
-                    notes=run_notes or None,
+            try:
+                with st.spinner(
+                    f"Running pilot search across {len(queries_to_run)} quer(y/ies)..."
+                ):
+                    outcome = pilot_service.run_pilot_search(
+                        db,
+                        study_id=study_id,
+                        queries=queries_to_run,
+                        results_per_query=results_per_query,
+                        search_order=search_order,
+                        reviewer_id=current_reviewer.id if current_reviewer else None,
+                        notes=run_notes or None,
+                        publication_filter_type=pub_filter_type,
+                        published_after=pub_after,
+                        published_before=pub_before,
+                    )
+                if current_study.search_status == "Draft":
+                    crud.update_study(db, study_id, search_status="Pilot testing")
+                # Keep the study's date filter in sync with whatever was just piloted,
+                # so "Approve search strategy" below reflects what was actually tested.
+                crud.update_study(
+                    db, study_id,
                     publication_filter_type=pub_filter_type,
                     published_after=pub_after,
                     published_before=pub_before,
                 )
-            if current_study.search_status == "Draft":
-                crud.update_study(db, study_id, search_status="Pilot testing")
-            # Keep the study's date filter in sync with whatever was just piloted,
-            # so "Approve search strategy" below reflects what was actually tested.
-            crud.update_study(
-                db, study_id,
-                publication_filter_type=pub_filter_type,
-                published_after=pub_after,
-                published_before=pub_before,
-            )
-            st.session_state["pilot_run_id"] = outcome.run_id
+                st.session_state["pilot_run_id"] = outcome.run_id
+            finally:
+                # Always clear, including when the run raises or Streamlit
+                # unwinds the script -- a stuck flag would block every later
+                # search in this session.
+                st.session_state[_PILOT_RUN_IN_PROGRESS] = False
             if outcome.errors:
                 st.warning(
                     f"Saved {outcome.results_saved} result(s), but {len(outcome.errors)} "
@@ -144,6 +171,7 @@ with st.expander("Run a new pilot search", expanded=not all_runs):
                 )
             else:
                 st.success(f"Pilot run complete: {outcome.results_saved} results saved.")
+            db.close()
             st.rerun()
 
 st.markdown("---")

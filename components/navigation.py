@@ -32,16 +32,24 @@ def render_context_sidebar(db: Session) -> tuple[Study | None, Reviewer | None]:
     if not study_rows:
         st.sidebar.info("No studies yet. Create one on the Study Setup page.")
     else:
-        options = {row["id"]: f"{row['name']} ({row['search_status']})" for row in study_rows}
+        # Named distinctly from the reviewer dict below: both format_func
+        # closures capture the variable, not its value, so sharing one name
+        # made the study picker format itself with reviewer labels whenever
+        # Streamlit called the closure after the second assignment.
+        study_labels = {row["id"]: f"{row['name']} ({row['search_status']})" for row in study_rows}
         default_id = st.session_state.get("current_study_id", study_rows[0]["id"])
-        if default_id not in options:
+        if default_id not in study_labels:
             default_id = study_rows[0]["id"]
         selected_id = st.sidebar.selectbox(
             "Current study",
-            options=list(options.keys()),
-            format_func=lambda sid: options[sid],
-            index=list(options.keys()).index(default_id),
+            options=list(study_labels.keys()),
+            format_func=lambda sid: study_labels[sid],
+            index=list(study_labels.keys()).index(default_id),
             label_visibility="collapsed",
+            # Explicit key: without one, the widget's identity is derived from
+            # its parameters, so the study and reviewer pickers can be confused
+            # for one another when their option lists change between reruns.
+            key="sidebar_study_picker",
         )
         st.session_state["current_study_id"] = selected_id
         current_study = crud.get_study(db, selected_id)
@@ -52,16 +60,17 @@ def render_context_sidebar(db: Session) -> tuple[Study | None, Reviewer | None]:
     if not reviewer_rows:
         st.sidebar.info("No reviewers yet. Add one on the Settings page.")
     else:
-        options = {row["id"]: f"{row['name']} ({row['initials']})" for row in reviewer_rows}
+        reviewer_labels = {row["id"]: f"{row['name']} ({row['initials']})" for row in reviewer_rows}
         default_id = st.session_state.get("current_reviewer_id", reviewer_rows[0]["id"])
-        if default_id not in options:
+        if default_id not in reviewer_labels:
             default_id = reviewer_rows[0]["id"]
         selected_id = st.sidebar.selectbox(
             "Current reviewer",
-            options=list(options.keys()),
-            format_func=lambda rid: options[rid],
-            index=list(options.keys()).index(default_id),
+            options=list(reviewer_labels.keys()),
+            format_func=lambda rid: reviewer_labels[rid],
+            index=list(reviewer_labels.keys()).index(default_id),
             label_visibility="collapsed",
+            key="sidebar_reviewer_picker",
         )
         st.session_state["current_reviewer_id"] = selected_id
         current_reviewer = crud.get_reviewer(db, selected_id)
