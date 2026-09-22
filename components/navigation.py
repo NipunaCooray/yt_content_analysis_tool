@@ -78,6 +78,26 @@ def render_context_sidebar(db: Session) -> tuple[Study | None, Reviewer | None]:
     return current_study, current_reviewer
 
 
+def close_and_rerun(db: Session) -> None:
+    """Return the database connection to the pool, then rerun the script.
+
+    Always use this instead of a bare st.rerun() on a page that holds a
+    Session. st.rerun() raises RerunException, so a db.close() further down
+    the page never runs -- and the raised exception keeps a reference to the
+    frame holding the Session, which is a reference *cycle*. Refcounting
+    cannot break a cycle, so the connection is only returned whenever the
+    cyclic garbage collector next happens to run.
+
+    That made it look harmless in tests while leaking one pooled connection
+    per interaction in production: clicking through screening decisions or
+    relevance ratings exhausted the pool, after which *every* page failed on
+    connection checkout with sqlalchemy.exc.TimeoutError -- including pages
+    that had done nothing wrong.
+    """
+    db.close()
+    st.rerun()
+
+
 def require_study(study: Study | None) -> bool:
     if study is None:
         st.warning("Create or select a study first (see Study Setup in the sidebar).")

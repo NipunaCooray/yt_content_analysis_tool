@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from components.caching import invalidate_reviewer_options
-from components.navigation import page_header, render_context_sidebar
+from components.navigation import close_and_rerun, page_header, render_context_sidebar
 from db import crud, region_probe
 from db.database import (
     get_database_info,
@@ -168,7 +168,7 @@ with tab_add:
                 )
                 invalidate_reviewer_options()
                 st.success(f"Reviewer '{name}' added.")
-                st.rerun()
+                close_and_rerun(db)
 
 with tab_list:
     reviewers = crud.list_reviewers(db)
@@ -203,12 +203,12 @@ with tab_list:
                             )
                             invalidate_reviewer_options()
                             st.success("Reviewer updated.")
-                            st.rerun()
+                            close_and_rerun(db)
                     if delete:
                         crud.delete_reviewer(db, reviewer.id)
                         invalidate_reviewer_options()
                         st.warning("Reviewer deleted.")
-                        st.rerun()
+                        close_and_rerun(db)
 
 st.markdown("---")
 st.subheader("Audit log")

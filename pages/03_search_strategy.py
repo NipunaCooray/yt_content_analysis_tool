@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from components.navigation import page_header, render_context_sidebar, require_study
+from components.navigation import close_and_rerun, page_header, render_context_sidebar, require_study
 from db import crud
 from db.database import get_session
 from utils.constants import QUERY_CATEGORIES, STATES_TERRITORIES
@@ -47,7 +47,7 @@ with tab_add:
                     is_active=True,
                 )
                 st.success("Query added.")
-                st.rerun()
+                close_and_rerun(db)
 
 with tab_manage:
     filter_col1, filter_col2 = st.columns(2)
@@ -123,17 +123,17 @@ with tab_manage:
                                 is_active=new_active,
                             )
                             st.success("Query updated.")
-                            st.rerun()
+                            close_and_rerun(db)
 
                     if duplicate:
                         crud.duplicate_search_query(db, query.id)
                         st.success("Query duplicated.")
-                        st.rerun()
+                        close_and_rerun(db)
 
                     if delete:
                         crud.delete_search_query(db, query.id)
                         st.warning("Query deleted.")
-                        st.rerun()
+                        close_and_rerun(db)
 
 with tab_import:
     st.caption(
@@ -172,6 +172,6 @@ with tab_import:
                         )
                         imported += 1
                     st.success(f"Imported {imported} queries.")
-                    st.rerun()
+                    close_and_rerun(db)
 
 db.close()

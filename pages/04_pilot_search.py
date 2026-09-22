@@ -5,7 +5,7 @@ import datetime
 import pandas as pd
 import streamlit as st
 
-from components.navigation import page_header, render_context_sidebar, require_study
+from components.navigation import close_and_rerun, page_header, render_context_sidebar, require_study
 from components.video_player import video_thumbnail
 from db import crud
 from db.database import get_session
@@ -171,8 +171,7 @@ with st.expander("Run a new pilot search", expanded=not all_runs):
                 )
             else:
                 st.success(f"Pilot run complete: {outcome.results_saved} results saved.")
-            db.close()
-            st.rerun()
+            close_and_rerun(db)
 
 st.markdown("---")
 
@@ -375,19 +374,19 @@ else:
             )
             if advance and idx < len(results) - 1:
                 st.session_state[nav_key] = idx + 1
-            st.rerun()
+            close_and_rerun(db)
 
         b1, b2, b3, b4 = st.columns(4)
         if b1.button("◀ Previous", disabled=idx == 0):
             st.session_state[nav_key] = idx - 1
-            st.rerun()
+            close_and_rerun(db)
         if b2.button("Save"):
             _save(advance=False)
         if b3.button("Save & next ▶", type="primary"):
             _save(advance=True)
         if b4.button("Next ▶", disabled=idx == len(results) - 1):
             st.session_state[nav_key] = idx + 1
-            st.rerun()
+            close_and_rerun(db)
 
 st.markdown("---")
 
@@ -434,6 +433,6 @@ if st.button("✅ Approve search strategy", type="primary", disabled=not active_
         published_before=current_study.published_before,
     )
     st.success("Search strategy approved. Study status set to 'Ready for full search'.")
-    st.rerun()
+    close_and_rerun(db)
 
 db.close()

@@ -5,7 +5,7 @@ import datetime
 import streamlit as st
 
 from components.caching import invalidate_study_options
-from components.navigation import page_header, render_context_sidebar
+from components.navigation import close_and_rerun, page_header, render_context_sidebar
 from db import crud
 from db.database import get_session
 from utils.constants import (
@@ -63,7 +63,7 @@ with tab_create:
                 invalidate_study_options()
                 st.session_state["current_study_id"] = study.id
                 st.success(f"Study '{study.name}' created.")
-                st.rerun()
+                close_and_rerun(db)
 
 with tab_list:
     if not studies:
@@ -141,17 +141,17 @@ with tab_list:
                             )
                             invalidate_study_options()
                             st.success("Study updated.")
-                            st.rerun()
+                            close_and_rerun(db)
 
                     if select:
                         st.session_state["current_study_id"] = study.id
                         st.success(f"'{study.name}' is now the current study.")
-                        st.rerun()
+                        close_and_rerun(db)
 
                     if delete:
                         crud.delete_study(db, study.id)
                         invalidate_study_options()
                         st.warning(f"Deleted study '{study.name}'.")
-                        st.rerun()
+                        close_and_rerun(db)
 
 db.close()

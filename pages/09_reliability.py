@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from components.navigation import page_header, render_context_sidebar, require_study
+from components.navigation import close_and_rerun, page_header, render_context_sidebar, require_study
 from db import crud
 from db.database import get_session
 from services import reliability_service
@@ -75,7 +75,7 @@ with tab_screening_sample:
             db, study_id, "screening", [v.id for v in all_videos], pct
         )
         st.success(f"Added {added} video(s) to the screening double-coding sample.")
-        st.rerun()
+        close_and_rerun(db)
     col2.metric("Videos in sample", len(sample))
     col2.caption(f"Of {len(all_videos)} unique videos ({pct}% target).")
 
@@ -89,7 +89,7 @@ with tab_coding_sample:
             db, study_id, "coding", [v.id for v in included_videos], pct
         )
         st.success(f"Added {added} video(s) to the coding double-coding sample.")
-        st.rerun()
+        close_and_rerun(db)
     col2.metric("Videos in sample", len(sample))
     col2.caption(f"Of {len(included_videos)} included videos ({pct}% target).")
 

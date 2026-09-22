@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from components.navigation import page_header, render_context_sidebar, require_study
+from components.navigation import close_and_rerun, page_header, render_context_sidebar, require_study
 from components.video_player import embed_video
 from db import crud
 from db.database import get_session
@@ -104,7 +104,7 @@ if filter_col2.button("▶ Resume last uncoded"):
     )
     if next_uncoded:
         st.session_state["coding_current_video_pk"] = next_uncoded.id
-        st.rerun()
+        close_and_rerun(db)
     else:
         st.toast("You've fully coded every included video.", icon="✅")
 
@@ -306,18 +306,18 @@ with col_form:
         )
         if advance and idx < len(filtered) - 1:
             st.session_state["coding_current_video_pk"] = filtered_ids[idx + 1]
-        st.rerun()
+        close_and_rerun(db)
 
     b1, b2, b3, b4 = st.columns(4)
     if b1.button("◀ Previous", disabled=idx == 0):
         st.session_state["coding_current_video_pk"] = filtered_ids[idx - 1]
-        st.rerun()
+        close_and_rerun(db)
     if b2.button("Save"):
         _save(advance=False)
     if b3.button("Save & next ▶", type="primary"):
         _save(advance=True)
     if b4.button("Next ▶", disabled=idx == len(filtered) - 1):
         st.session_state["coding_current_video_pk"] = filtered_ids[idx + 1]
-        st.rerun()
+        close_and_rerun(db)
 
 db.close()

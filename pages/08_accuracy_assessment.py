@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from components.navigation import page_header, render_context_sidebar, require_study
+from components.navigation import close_and_rerun, page_header, render_context_sidebar, require_study
 from components.video_player import embed_video
 from db import crud
 from db.database import get_session
@@ -84,7 +84,7 @@ if filter_col2.button("▶ Resume last incomplete"):
     )
     if next_incomplete:
         st.session_state["accuracy_current_video_pk"] = next_incomplete.id
-        st.rerun()
+        close_and_rerun(db)
     else:
         st.toast("All included videos have a completed accuracy review.", icon="✅")
 
@@ -160,14 +160,14 @@ with col_video:
                 db, study_id=study_id, video_pk=current_pk,
                 reviewer_id=current_reviewer.id if current_reviewer else None, is_complete=False,
             )
-            st.rerun()
+            close_and_rerun(db)
     else:
         if st.button("✅ Mark accuracy review complete", type="primary"):
             crud.set_accuracy_review_complete(
                 db, study_id=study_id, video_pk=current_pk,
                 reviewer_id=current_reviewer.id if current_reviewer else None, is_complete=True,
             )
-            st.rerun()
+            close_and_rerun(db)
 
 with col_form:
     claims = crud.list_accuracy_claims(db, study_id, current_pk)
@@ -221,12 +221,12 @@ with col_form:
                             notes=notes or None,
                         )
                         st.success("Claim updated.")
-                        st.rerun()
+                        close_and_rerun(db)
 
                 if delete:
                     crud.delete_accuracy_claim(db, claim.id)
                     st.warning("Claim deleted.")
-                    st.rerun()
+                    close_and_rerun(db)
 
             if claim.official_source_url:
                 st.link_button("Open source URL", claim.official_source_url)
@@ -257,15 +257,15 @@ with col_form:
                     notes=new_notes or None,
                 )
                 st.success("Claim added.")
-                st.rerun()
+                close_and_rerun(db)
 
     st.markdown("---")
     nav1, nav2 = st.columns(2)
     if nav1.button("◀ Previous", disabled=idx == 0):
         st.session_state["accuracy_current_video_pk"] = filtered_ids[idx - 1]
-        st.rerun()
+        close_and_rerun(db)
     if nav2.button("Next ▶", disabled=idx == len(filtered) - 1):
         st.session_state["accuracy_current_video_pk"] = filtered_ids[idx + 1]
-        st.rerun()
+        close_and_rerun(db)
 
 db.close()

@@ -5,7 +5,7 @@ import datetime
 import pandas as pd
 import streamlit as st
 
-from components.navigation import page_header, render_context_sidebar, require_study
+from components.navigation import close_and_rerun, page_header, render_context_sidebar, require_study
 from db import crud
 from db.database import get_session
 from services import coding_service, screening_service, search_service
@@ -177,7 +177,7 @@ with st.expander("Run full search", expanded=not crud.list_full_search_runs(db, 
                 )
             else:
                 st.success(msg)
-            st.rerun()
+            close_and_rerun(db)
 
 st.markdown("---")
 
