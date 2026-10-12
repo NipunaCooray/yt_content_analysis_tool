@@ -6,6 +6,10 @@ team can refine the coding framework after pilot testing without touching
 application logic. See handover doc section 30.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+
 # ---------------------------------------------------------------------------
 # Study
 # ---------------------------------------------------------------------------
@@ -176,67 +180,102 @@ AUDIENCE_TYPES = [
 YES_NO_UNCLEAR = ["Yes", "No", "Unclear"]
 
 # ---------------------------------------------------------------------------
-# Information coverage coding (handover doc section 15)
+# Information coverage coding (revised after researcher user testing)
 # ---------------------------------------------------------------------------
+#
+# Each item has a stable `key` -- that is what's stored (in
+# information_domain_codes.domain_name), so `label` wording can be refined
+# later without breaking saved data. Category and label are derived from
+# this list at read/export time, never stored.
+#
+# Legacy rows from the previous 15-domain framework (stored under their
+# human-readable names, e.g. "Fares/payment") are left in place in the same
+# table. They are never auto-mapped onto these keys -- the frameworks don't
+# correspond one-to-one -- and are exported separately as legacy data.
 
-INFORMATION_DOMAINS = [
-    "Journey planning",
-    "Routes/destinations",
-    "Timetables/frequency",
-    "Fares/payment",
-    "Concessions",
-    "Booking",
-    "Eligibility",
-    "Finding stop/station/pickup point",
-    "Boarding",
-    "Transfers/connections",
-    "Getting off",
-    "Accessibility features",
-    "Assistance available",
-    "Disruptions / what to do if problems occur",
-    "Emergency/help information",
+
+@dataclass(frozen=True)
+class CodingItem:
+    key: str
+    label: str
+    category: str | None = None
+
+
+INFORMATION_COVERAGE_CATEGORIES = [
+    "General Public Transport Information",
+    "Journey Planning",
+    "Payment",
+    "Stop / Station / Platform / Wharf Information",
+    "Riding the Service",
+    "During the Trip",
+    "Transfers and Connections",
+    "Miscellaneous",
 ]
 
-COVERAGE_VALUES = ["Present", "Absent", "Not applicable", "Unclear if needed"]
+_GENERAL, _JOURNEY, _PAYMENT, _STOP, _RIDING, _TRIP, _TRANSFERS, _MISC = INFORMATION_COVERAGE_CATEGORIES
 
-# ---------------------------------------------------------------------------
-# Older-adult needs coding (handover doc section 16)
-# ---------------------------------------------------------------------------
-
-OLDER_ADULT_NEEDS = [
-    "Physical accessibility / mobility",
-    "Walking requirements",
-    "Seating/rest",
-    "Toilets",
-    "Costs/concessions",
-    "Personal safety",
-    "Assistance from staff/driver",
-    "Mobility aids",
-    "Digital requirements / smartphone dependence",
-    "Non-digital alternatives",
-    "Service disruptions / contingency planning",
-    "Clear step-by-step guidance",
+INFORMATION_COVERAGE_ITEMS = [
+    CodingItem("general_modes_available", "What types of modes are available", _GENERAL),
+    CodingItem("general_benefits", "Benefits of taking public transport", _GENERAL),
+    CodingItem("general_better_than_driving", "When/why public transport is better than driving", _GENERAL),
+    CodingItem("journey_destination_selection", "Destination selection", _JOURNEY),
+    CodingItem("journey_route_planner", "Using app/website to plan route", _JOURNEY),
+    CodingItem("journey_identify_routes_stops", "How to identify routes, stops, transfer points", _JOURNEY),
+    CodingItem("journey_reading_timetables", "Reading timetables/schedules", _JOURNEY),
+    CodingItem("journey_estimate_travel_times", "Estimate travel times", _JOURNEY),
+    CodingItem("payment_how_to_pay", "How to pay", _PAYMENT),
+    CodingItem("payment_when_to_pay", "When to pay", _PAYMENT),
+    CodingItem("payment_what_to_use", "What to use to pay", _PAYMENT),
+    CodingItem("payment_fares_concessions", "Fare cost and other concessions", _PAYMENT),
+    CodingItem("stop_find_correct", "How to find correct stop / station / platform / wharf", _STOP),
+    CodingItem("stop_exit_correct", "How to exit correct stop / station / platform / wharf", _STOP),
+    CodingItem("riding_accessibility_features", "Accessibility features", _RIDING),
+    CodingItem(
+        "riding_specific_rules",
+        "Any specific rules, e.g. requesting service, priority seating, boarding requirements",
+        _RIDING,
+    ),
+    CodingItem("riding_etiquette", "Etiquette when taking service", _RIDING),
+    CodingItem("trip_announcements", "Announcements — visual and/or audio", _TRIP),
+    CodingItem("trip_safety", "Safety considerations", _TRIP),
+    CodingItem("trip_request_stop", "How to request a stop — if applicable", _TRIP),
+    CodingItem("trip_preparing_to_get_off", "Preparing to get off", _TRIP),
+    CodingItem("transfers_navigate_multimodal", "Steps to navigate multimodal connections / transfers", _TRANSFERS),
+    CodingItem("transfers_find_connections", "How to find connections", _TRANSFERS),
+    CodingItem("transfers_reading_times", "Reading transfer times", _TRANSFERS),
+    CodingItem("transfers_missed_connection", "What to do if a connection / transfer is missed", _TRANSFERS),
+    CodingItem("misc_emergency_contacts", "Emergency contact points", _MISC),
+    CodingItem("misc_contact_staff", "How to contact staff", _MISC),
+    CodingItem("misc_staff_help", "What staff can help with", _MISC),
+    CodingItem("misc_wrong_service", "What to do if the wrong service is caught", _MISC),
+    CodingItem("misc_delay", "What to do if there is a delay", _MISC),
 ]
 
-NEED_VALUES = ["Addressed", "Not addressed", "Not applicable", "Unclear if needed"]
+INFORMATION_COVERAGE_VALUES = ["Present", "Absent", "Not applicable", "Unclear"]
 
 # ---------------------------------------------------------------------------
-# Presentation / communication coding (handover doc section 17)
+# Older-adult needs coding (revised after researcher user testing)
 # ---------------------------------------------------------------------------
+#
+# Same stable-key storage as information coverage above (keys are stored in
+# older_adult_need_codes.need_name; legacy 12-need rows are left in place).
+# Each item has its own optional "If Yes, what did they mention?" note.
 
-PRESENTATION_ITEMS = [
-    "Captions available",
-    "Clear audio",
-    "Readable on-screen text",
-    "Visual demonstration provided",
-    "Appropriate pace",
-    "Jargon/acronyms explained",
-    "Clear sequence",
-    "Step-by-step structure",
-    "Contact/help details provided",
+OLDER_ADULT_NEEDS_PROMPT = "Does the video mention information on the following?"
+OLDER_ADULT_NEEDS_NOTE_PROMPT = "If Yes, what did they mention?"
+
+OLDER_ADULT_NEED_ITEMS = [
+    CodingItem("older_journey_planning", "Journey Planning"),
+    CodingItem("older_payment", "Payment"),
+    CodingItem("older_accessibility_safety", "Accessibility and safety"),
+    CodingItem("older_assistance_seeking", "Assistance seeking"),
 ]
 
-PRESENTATION_VALUES = ["Yes", "No", "Not applicable", "Unclear"]
+OLDER_ADULT_NEED_VALUES = ["Yes", "No"]
+
+# Presentation / communication coding was removed after researcher user
+# testing. Existing presentation_codes rows are preserved (and exported as
+# legacy data) but no new ones are collected.
 
 # ---------------------------------------------------------------------------
 # Accuracy assessment (handover doc section 18)

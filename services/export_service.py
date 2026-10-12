@@ -13,6 +13,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from db import crud
+from utils.constants import INFORMATION_COVERAGE_ITEMS, OLDER_ADULT_NEED_ITEMS
 from utils.helpers import study_export_code
 
 
@@ -218,37 +219,95 @@ def video_characteristics_df(db: Session, study_id: int) -> pd.DataFrame:
     } for video_pk, c in codings.items()])
 
 
-def _domain_codes_df(db: Session, study_id: int, rows, name_field: str) -> pd.DataFrame:
+def _item_code_rows(db: Session, study_id: int, rows) -> list[tuple[dict, object]]:
+    """Pair each item-code row with its coding context (study, video and
+    *reviewer*). Every reviewer's record is kept -- double-coded videos get
+    one row per reviewer, never collapsed or overwritten."""
     videos = {v.id: v for v in crud.list_videos(db, study_id)}
-    codings_by_id = {c.id: c for c in crud.list_video_codings(db, study_id).values()}
+    codings = {c.id: c for c in crud.list_all_video_codings_for_study(db, study_id)}
+    reviewer_names = {r.id: r.name for r in crud.list_reviewers(db)}
     out = []
     for r in rows:
-        coding = codings_by_id.get(r.video_coding_id)
+        coding = codings.get(r.video_coding_id)
         video = videos.get(coding.video_id) if coding else None
-        out.append({
+        out.append(({
+            "study_id": study_id,
             "video_pk": coding.video_id if coding else None,
             "video_id": video.video_id if video else None,
             "title": video.title if video else None,
-            name_field: getattr(r, name_field),
-            "value": r.value,
-            "notes": r.notes,
-        })
-    return pd.DataFrame(out)
+            "reviewer_id": coding.reviewer_id if coding else None,
+            "reviewer_name": reviewer_names.get(coding.reviewer_id) if coding else None,
+        }, r))
+    return out
+
+
+def _framework_order(items) -> dict[str, int]:
+    return {item.key: i for i, item in enumerate(items)}
 
 
 def information_domains_df(db: Session, study_id: int) -> pd.DataFrame:
-    rows = crud.list_all_information_domain_codes_for_study(db, study_id)
-    return _domain_codes_df(db, study_id, rows, "domain_name")
+    """Revised information-coverage framework, long format: one row per
+    (reviewer's coding, item). Category/label come from the central
+    framework config by stable key; legacy-framework rows are excluded (see
+    legacy_information_domains_df)."""
+    items = {i.key: i for i in INFORMATION_COVERAGE_ITEMS}
+    order = _framework_order(INFORMATION_COVERAGE_ITEMS)
+    rows = [r for r in crud.list_all_information_domain_codes_for_study(db, study_id) if r.domain_name in items]
+    rows.sort(key=lambda r: (r.video_coding_id, order[r.domain_name]))
+    return pd.DataFrame([{
+        **context,
+        "category": items[r.domain_name].category,
+        "item_key": r.domain_name,
+        "item_label": items[r.domain_name].label,
+        "value": r.value,
+        "notes": r.notes,
+    } for context, r in _item_code_rows(db, study_id, rows)])
 
 
 def older_adult_needs_df(db: Session, study_id: int) -> pd.DataFrame:
-    rows = crud.list_all_older_adult_need_codes_for_study(db, study_id)
-    return _domain_codes_df(db, study_id, rows, "need_name")
+    """Revised older-adult-needs framework (four Yes/No items, each with its
+    own note), one row per (reviewer's coding, need)."""
+    items = {i.key: i for i in OLDER_ADULT_NEED_ITEMS}
+    order = _framework_order(OLDER_ADULT_NEED_ITEMS)
+    rows = [r for r in crud.list_all_older_adult_need_codes_for_study(db, study_id) if r.need_name in items]
+    rows.sort(key=lambda r: (r.video_coding_id, order[r.need_name]))
+    return pd.DataFrame([{
+        **context,
+        "need_key": r.need_name,
+        "need_label": items[r.need_name].label,
+        "mentioned": r.value,
+        "notes": r.notes,
+    } for context, r in _item_code_rows(db, study_id, rows)])
 
 
-def presentation_coding_df(db: Session, study_id: int) -> pd.DataFrame:
+# Legacy (pre-revision) coding: preserved and archived as-is, never mapped
+# onto the revised framework.
+
+
+def _legacy_codes_df(db: Session, study_id: int, rows, name_field: str) -> pd.DataFrame:
+    return pd.DataFrame([{
+        **context,
+        name_field: getattr(r, name_field),
+        "value": r.value,
+        "notes": r.notes,
+    } for context, r in _item_code_rows(db, study_id, rows)])
+
+
+def legacy_information_domains_df(db: Session, study_id: int) -> pd.DataFrame:
+    current = {i.key for i in INFORMATION_COVERAGE_ITEMS}
+    rows = [r for r in crud.list_all_information_domain_codes_for_study(db, study_id) if r.domain_name not in current]
+    return _legacy_codes_df(db, study_id, rows, "domain_name")
+
+
+def legacy_older_adult_needs_df(db: Session, study_id: int) -> pd.DataFrame:
+    current = {i.key for i in OLDER_ADULT_NEED_ITEMS}
+    rows = [r for r in crud.list_all_older_adult_need_codes_for_study(db, study_id) if r.need_name not in current]
+    return _legacy_codes_df(db, study_id, rows, "need_name")
+
+
+def legacy_presentation_coding_df(db: Session, study_id: int) -> pd.DataFrame:
     rows = crud.list_all_presentation_codes_for_study(db, study_id)
-    return _domain_codes_df(db, study_id, rows, "item_name")
+    return _legacy_codes_df(db, study_id, rows, "item_name")
 
 
 def accuracy_claims_df(db: Session, study_id: int) -> pd.DataFrame:
@@ -355,7 +414,6 @@ def reliability_summary_df(db: Session, study_id: int) -> pd.DataFrame:
         for label, stats in [
             ("Coding - information coverage", reliability_service.information_domain_reliability(db, double_coded)),
             ("Coding - older-adult needs", reliability_service.older_adult_need_reliability(db, double_coded)),
-            ("Coding - presentation", reliability_service.presentation_reliability(db, double_coded)),
         ]:
             for s in stats:
                 rows.append({"stage": label, "field": s.field_name, "n_pairs": s.n_pairs,
@@ -370,7 +428,9 @@ class ExportDataset:
     label: str
     filename_suffix: str
     builder: Callable[[Session, int], pd.DataFrame]
-    required: bool = True  # the 14 datasets from handover doc section 22
+    # The datasets from handover doc section 22 (presentation coding has since
+    # been removed from the framework -- its legacy rows are archived below).
+    required: bool = True
 
 
 EXPORT_DATASETS: list[ExportDataset] = [
@@ -385,7 +445,6 @@ EXPORT_DATASETS: list[ExportDataset] = [
     ExportDataset("video_characteristics", "Video characteristics (canonical)", "video_coding", video_characteristics_df),
     ExportDataset("information_domains", "Information coverage coding", "information_domains", information_domains_df),
     ExportDataset("older_adult_needs", "Older-adult-needs coding", "older_adult_needs", older_adult_needs_df),
-    ExportDataset("presentation_coding", "Presentation coding", "presentation_coding", presentation_coding_df),
     ExportDataset("accuracy_claims", "Accuracy claims", "accuracy_claims", accuracy_claims_df),
     ExportDataset("reviewers", "Reviewers", "reviewers", reviewers_df),
     ExportDataset(
@@ -399,6 +458,18 @@ EXPORT_DATASETS: list[ExportDataset] = [
     ExportDataset(
         "reliability_summary", "Reliability summary (agreement/kappa)", "reliability_summary",
         reliability_summary_df, required=False,
+    ),
+    ExportDataset(
+        "legacy_information_domains", "Legacy information coverage coding (archived)",
+        "legacy_information_domains", legacy_information_domains_df, required=False,
+    ),
+    ExportDataset(
+        "legacy_older_adult_needs", "Legacy older-adult-needs coding (archived)",
+        "legacy_older_adult_needs", legacy_older_adult_needs_df, required=False,
+    ),
+    ExportDataset(
+        "legacy_presentation_coding", "Legacy presentation coding (archived)",
+        "legacy_presentation_coding", legacy_presentation_coding_df, required=False,
     ),
 ]
 
@@ -422,7 +493,7 @@ def to_json_bytes(df: pd.DataFrame) -> bytes:
 def build_zip_export(
     db: Session, study_id: int, dataframes: dict[str, pd.DataFrame] | None = None
 ) -> bytes:
-    """All 14 datasets as CSVs bundled into one in-memory ZIP file.
+    """Every dataset as a CSV, bundled into one in-memory ZIP file.
 
     `dataframes`, if given, is a {dataset.key: DataFrame} map of already-built
     datasets (e.g. from the caller's own per-dataset cache) -- pass it to

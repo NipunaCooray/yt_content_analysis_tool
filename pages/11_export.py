@@ -25,7 +25,7 @@ bonus_count = len(export_service.EXPORT_DATASETS) - required_count
 
 # Build every dataset's DataFrame exactly once (cached, short TTL -- see
 # components/caching.py) and reuse it for both the all-in-one ZIP and each
-# individual preview/download below, instead of building all 17 twice.
+# individual preview/download below, instead of building them all twice.
 dataframes = {
     dataset.key: cached_export_dataframe(db, study_id, dataset.key)
     for dataset in export_service.EXPORT_DATASETS
@@ -39,10 +39,10 @@ st.download_button(
     type="primary",
 )
 st.caption(
-    f"{required_count} required datasets plus {bonus_count} reliability datasets (every "
-    "reviewer's independent screening/coding records, and computed agreement/kappa — see "
-    "the Reliability page). Each is also available individually below, as CSV (priority "
-    "format) or JSON."
+    f"{required_count} required datasets plus {bonus_count} additional datasets: reliability "
+    "(every reviewer's independent screening/coding records, and computed agreement/kappa — "
+    "see the Reliability page) and archived legacy coding from the pre-revision framework. "
+    "Each is also available individually below, as CSV (priority format) or JSON."
 )
 
 st.markdown("---")

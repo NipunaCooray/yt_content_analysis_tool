@@ -69,7 +69,7 @@ def invalidate_reviewer_options() -> None:
 def cached_export_dataframe(_db: Session, study_id: int, dataset_key: str):
     """A single export dataset's DataFrame -- safe to cache as-is, since
     export_service already returns plain pandas DataFrames, never ORM
-    objects. Used by both the Export page (renders all 17 previews on
+    objects. Used by both the Export page (renders every preview on
     every rerun) and the Dashboard (reuses several of the same builders)."""
     dataset = next(d for d in export_service.EXPORT_DATASETS if d.key == dataset_key)
     return export_service.build_dataframe(_db, study_id, dataset)

@@ -13,6 +13,7 @@ import pytest
 from db import crud
 from services import coding_service, export_service, pilot_service, search_service
 from services.youtube_api import SearchResultItem
+from tests.coding_helpers import full_information_coverage, full_older_adult_needs
 
 
 @pytest.fixture()
@@ -69,9 +70,12 @@ def fully_populated_study(db_session, monkeypatch):
         db_session, study_id=study.id, video_pk=video.id, reviewer_id=reviewer.id,
         transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type="Media",
         intended_audience="General public", older_adult_targeted="No", notes=None,
-        information_domain_values={"Fares/payment": ("Present", "clear")},
-        older_adult_need_values={"Seating/rest": ("Addressed", None)},
-        presentation_values={"Captions available": ("Yes", None)},
+        information_domain_values=full_information_coverage(
+            payment_how_to_pay=("Present", "clear"),
+        ),
+        older_adult_need_values=full_older_adult_needs(
+            older_accessibility_safety=("Yes", "Mentions priority seating and step-free boarding."),
+        ),
         mark_complete=True,
     )
     crud.create_accuracy_claim(
@@ -90,12 +94,15 @@ def test_export_filename_matches_spec_naming_convention(db_session):
     assert export_service.export_filename(7, dataset, "csv") == "study_007_pilot_results.csv"
 
 
-def test_all_fourteen_datasets_registered():
+def test_all_datasets_registered():
     required = [d for d in export_service.EXPORT_DATASETS if d.required]
-    assert len(required) == 14  # handover doc section 22
-    # Plus reliability datasets (Phase 8), additive beyond the required 14.
-    assert len(export_service.EXPORT_DATASETS) == 17
-    assert len({d.key for d in export_service.EXPORT_DATASETS}) == 17  # no duplicate keys
+    # Handover doc section 22's 14, less presentation coding (removed from
+    # the framework after user testing -- now archived as legacy below).
+    assert len(required) == 13
+    assert "presentation_coding" not in {d.key for d in export_service.EXPORT_DATASETS}
+    # Plus 3 reliability datasets (Phase 8) and 3 legacy-coding archives.
+    assert len(export_service.EXPORT_DATASETS) == 19
+    assert len({d.key for d in export_service.EXPORT_DATASETS}) == 19  # no duplicate keys
 
 
 def test_all_datasets_populated_for_a_fully_worked_study(db_session, fully_populated_study):
@@ -114,9 +121,11 @@ def test_all_datasets_populated_for_a_fully_worked_study(db_session, fully_popul
     assert row_counts["unique_videos"] == 1
     assert row_counts["screening"] == 1
     assert row_counts["video_characteristics"] == 1
-    assert row_counts["information_domains"] == 1
-    assert row_counts["older_adult_needs"] == 1
-    assert row_counts["presentation_coding"] == 1
+    assert row_counts["information_domains"] == 30  # one row per revised item
+    assert row_counts["older_adult_needs"] == 4
+    assert row_counts["legacy_information_domains"] == 0
+    assert row_counts["legacy_older_adult_needs"] == 0
+    assert row_counts["legacy_presentation_coding"] == 0
     assert row_counts["accuracy_claims"] == 1
     assert row_counts["reviewers"] == 1
 
@@ -130,13 +139,84 @@ def test_unique_videos_df_includes_derived_statuses(db_session, fully_populated_
     assert row["accuracy_status"] == "In progress"  # claim exists, review not marked complete
 
 
-def test_information_domains_df_flattens_with_video_context(db_session, fully_populated_study):
+def test_information_domains_df_is_long_format_with_framework_columns(db_session, fully_populated_study):
     study = fully_populated_study
     df = export_service.information_domains_df(db_session, study.id)
-    row = df[df["domain_name"] == "Fares/payment"].iloc[0]
+    for column in ["study_id", "video_id", "reviewer_id", "category", "item_key", "item_label",
+                   "value", "notes"]:
+        assert column in df.columns
+    row = df[df["item_key"] == "payment_how_to_pay"].iloc[0]
+    assert row["category"] == "Payment"
+    assert row["item_label"] == "How to pay"
     assert row["value"] == "Present"
     assert row["notes"] == "clear"
     assert row["video_id"] == "vidA"
+    assert row["study_id"] == study.id
+    # Rows follow the framework's order, not alphabetical key order.
+    assert df["item_key"].tolist()[:2] == ["general_modes_available", "general_benefits"]
+
+
+def test_older_adult_needs_df_exports_mentioned_and_item_notes(db_session, fully_populated_study):
+    study = fully_populated_study
+    df = export_service.older_adult_needs_df(db_session, study.id)
+    for column in ["study_id", "video_id", "reviewer_id", "need_key", "need_label", "mentioned", "notes"]:
+        assert column in df.columns
+    assert df["need_label"].tolist() == [
+        "Journey Planning", "Payment", "Accessibility and safety", "Assistance seeking",
+    ]
+    row = df[df["need_key"] == "older_accessibility_safety"].iloc[0]
+    assert row["mentioned"] == "Yes"
+    assert row["notes"] == "Mentions priority seating and step-free boarding."
+    assert df[df["need_key"] == "older_payment"].iloc[0]["mentioned"] == "No"
+
+
+def test_coding_exports_keep_each_reviewers_rows(db_session, fully_populated_study):
+    study = fully_populated_study
+    video = crud.list_videos(db_session, study.id)[0]
+    second = crud.create_reviewer(db_session, name="Second Reviewer", initials="SR")
+    coding_service.save_video_coding(
+        db_session, study_id=study.id, video_pk=video.id, reviewer_id=second.id,
+        transport_modes=[], jurisdictions=[], uploader_type=None, intended_audience=None,
+        older_adult_targeted=None, notes=None,
+        information_domain_values=full_information_coverage(payment_how_to_pay=("Absent", None)),
+        older_adult_need_values=full_older_adult_needs(older_payment=("Yes", "Tap on, tap off")),
+        mark_complete=True,
+    )
+
+    info = export_service.information_domains_df(db_session, study.id)
+    assert len(info) == 60
+    pay = info[info["item_key"] == "payment_how_to_pay"].set_index("reviewer_name")["value"]
+    assert pay.to_dict() == {"Jane Doe": "Present", "Second Reviewer": "Absent"}
+    assert info["video_id"].notna().all()  # second reviewer's rows keep their video context
+
+    needs = export_service.older_adult_needs_df(db_session, study.id)
+    pay_need = needs[needs["need_key"] == "older_payment"].set_index("reviewer_name")
+    assert pay_need["mentioned"].to_dict() == {"Jane Doe": "No", "Second Reviewer": "Yes"}
+    assert pay_need.loc["Second Reviewer", "notes"] == "Tap on, tap off"
+
+
+def test_legacy_coding_is_archived_separately_not_mixed_in(db_session, fully_populated_study):
+    from db.models import InformationDomainCode, OlderAdultNeedCode, PresentationCode
+
+    study = fully_populated_study
+    coding = next(iter(crud.list_video_codings(db_session, study.id).values()))
+    db_session.add_all([
+        InformationDomainCode(video_coding_id=coding.id, domain_name="Fares/payment", value="Present"),
+        OlderAdultNeedCode(video_coding_id=coding.id, need_name="Seating/rest", value="Addressed"),
+        PresentationCode(video_coding_id=coding.id, item_name="Captions available", value="Yes"),
+    ])
+    db_session.commit()
+
+    assert len(export_service.information_domains_df(db_session, study.id)) == 30
+    assert len(export_service.older_adult_needs_df(db_session, study.id)) == 4
+
+    legacy_info = export_service.legacy_information_domains_df(db_session, study.id)
+    assert legacy_info[["domain_name", "value"]].values.tolist() == [["Fares/payment", "Present"]]
+    legacy_needs = export_service.legacy_older_adult_needs_df(db_session, study.id)
+    assert legacy_needs[["need_name", "value"]].values.tolist() == [["Seating/rest", "Addressed"]]
+    legacy_pres = export_service.legacy_presentation_coding_df(db_session, study.id)
+    assert legacy_pres[["item_name", "value"]].values.tolist() == [["Captions available", "Yes"]]
+    assert legacy_pres.iloc[0]["video_id"] == "vidA"
 
 
 def test_csv_bytes_are_valid_and_include_header(db_session, fully_populated_study):
@@ -166,12 +246,14 @@ def test_empty_dataset_still_produces_valid_csv_header_only(db_session):
     assert csv_bytes == b"\n"  # pandas emits just a blank line for a columnless empty frame
 
 
-def test_build_zip_export_contains_all_seventeen_csvs(db_session, fully_populated_study):
+def test_build_zip_export_contains_every_dataset_csv(db_session, fully_populated_study):
     study = fully_populated_study
     zip_bytes = export_service.build_zip_export(db_session, study.id)
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         names = zf.namelist()
-        assert len(names) == 17
+        assert len(names) == 19
+        assert "study_001_presentation_coding.csv" not in names
+        assert "study_001_legacy_presentation_coding.csv" in names
         assert "study_001_search_queries.csv" in names
         assert "study_001_accuracy_claims.csv" in names
         assert "study_001_reliability_summary.csv" in names

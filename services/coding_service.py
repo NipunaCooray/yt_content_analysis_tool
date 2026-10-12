@@ -1,7 +1,11 @@
 """
-Video coding workflow logic (Phase 5): saving characteristics + the three
-domain-coding sections in one transaction, and deriving coding status/
-progress. See handover doc sections 14-17, 26.
+Video coding workflow logic (Phase 5): saving characteristics + the
+information-coverage and older-adult-needs sections in one transaction, and
+deriving coding status/progress. See handover doc sections 14-16, 26.
+
+The coding framework itself (items, stable keys, response values) lives in
+utils.constants; this module only validates against it. Presentation coding
+was removed after researcher user testing and is never written here.
 """
 
 from __future__ import annotations
@@ -12,6 +16,15 @@ from sqlalchemy.orm import Session
 
 from db import crud
 from db.models import VideoCoding
+from utils.constants import (
+    INFORMATION_COVERAGE_ITEMS,
+    INFORMATION_COVERAGE_VALUES,
+    OLDER_ADULT_NEED_ITEMS,
+    OLDER_ADULT_NEED_VALUES,
+)
+
+_COVERAGE_KEYS = {item.key for item in INFORMATION_COVERAGE_ITEMS}
+_NEED_KEYS = {item.key for item in OLDER_ADULT_NEED_ITEMS}
 
 STATUS_NOT_STARTED = "Not started"
 STATUS_IN_PROGRESS = "In progress"
@@ -44,6 +57,35 @@ def compute_progress(video_pks: list[int], codings: dict[int, VideoCoding]) -> C
     )
 
 
+def missing_for_completion(
+    information_domain_values: dict[str, str | None],
+    older_adult_need_values: dict[str, str | None],
+) -> list[str]:
+    """Labels of current-framework items still uncoded -- a video can only be
+    marked complete once this is empty. Values are {item_key: value}."""
+    missing = [
+        f"Information coverage: {item.label}"
+        for item in INFORMATION_COVERAGE_ITEMS
+        if not information_domain_values.get(item.key)
+    ]
+    missing += [
+        f"Older-adult needs: {item.label}"
+        for item in OLDER_ADULT_NEED_ITEMS
+        if not older_adult_need_values.get(item.key)
+    ]
+    return missing
+
+
+def _validate(values: dict, known_keys: set[str], allowed: list[str], section: str) -> None:
+    unknown = set(values) - known_keys
+    if unknown:
+        # Guards against writing rows under legacy (pre-revision) names.
+        raise ValueError(f"Unknown {section} item key(s): {sorted(unknown)}")
+    for key, (value, _notes) in values.items():
+        if value is not None and value not in allowed:
+            raise ValueError(f"Invalid {section} value {value!r} for {key}")
+
+
 def save_video_coding(
     db: Session,
     study_id: int,
@@ -55,14 +97,27 @@ def save_video_coding(
     intended_audience: str | None,
     older_adult_targeted: str | None,
     notes: str | None,
-    information_domain_values: dict[str, tuple[str, str | None]],
-    older_adult_need_values: dict[str, tuple[str, str | None]],
-    presentation_values: dict[str, tuple[str, str | None]],
+    information_domain_values: dict[str, tuple[str | None, str | None]],
+    older_adult_need_values: dict[str, tuple[str | None, str | None]],
     mark_complete: bool,
 ) -> VideoCoding:
-    """Save characteristics + all three domain-coding sections for one video
-    in a single transaction. Values are dicts of {name: (value, notes)}."""
-    status = STATUS_COMPLETE if mark_complete else STATUS_IN_PROGRESS
+    """Save characteristics + both domain-coding sections for one video in a
+    single transaction. Values are dicts of {item_key: (value, notes)}, with
+    value None for an item not coded yet.
+
+    mark_complete is only honoured once every current-framework item is
+    coded (see missing_for_completion); otherwise the work is still saved,
+    as in progress. Check the returned record's status to tell which.
+    """
+    _validate(information_domain_values, _COVERAGE_KEYS, INFORMATION_COVERAGE_VALUES,
+              "information coverage")
+    _validate(older_adult_need_values, _NEED_KEYS, OLDER_ADULT_NEED_VALUES, "older-adult needs")
+
+    missing = missing_for_completion(
+        {k: v for k, (v, _) in information_domain_values.items()},
+        {k: v for k, (v, _) in older_adult_need_values.items()},
+    )
+    status = STATUS_COMPLETE if mark_complete and not missing else STATUS_IN_PROGRESS
 
     coding = crud.upsert_video_coding(
         db,
@@ -78,12 +133,14 @@ def save_video_coding(
         status=status,
     )
 
-    for domain, (value, domain_notes) in information_domain_values.items():
-        crud.upsert_information_domain_code(db, coding.id, domain, value, domain_notes)
-    for need, (value, need_notes) in older_adult_need_values.items():
-        crud.upsert_older_adult_need_code(db, coding.id, need, value, need_notes)
-    for item, (value, item_notes) in presentation_values.items():
-        crud.upsert_presentation_code(db, coding.id, item, value, item_notes)
+    for key, (value, item_notes) in information_domain_values.items():
+        crud.upsert_information_domain_code(db, coding.id, key, value, item_notes)
+    for key, (value, need_notes) in older_adult_need_values.items():
+        # The note answers "If Yes, what did they mention?" -- it's hidden
+        # for any other answer, so don't keep a stale one behind a "No".
+        crud.upsert_older_adult_need_code(
+            db, coding.id, key, value, need_notes if value == "Yes" else None
+        )
 
     db.commit()
     db.refresh(coding)

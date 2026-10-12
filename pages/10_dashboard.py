@@ -128,24 +128,46 @@ else:
 st.markdown("---")
 st.subheader("Information coverage & older-adult needs")
 
+
+def _canonical_only(df: pd.DataFrame) -> pd.DataFrame:
+    """The item-code exports carry every reviewer's coding; keep only each
+    video's canonical one (the same records char_df holds), so double-coded
+    videos aren't counted twice."""
+    if df.empty or char_df.empty:
+        return df.iloc[0:0]
+    return df.merge(char_df[["video_pk", "reviewer_id"]], on=["video_pk", "reviewer_id"])
+
+
+info_df = _canonical_only(cached_export_dataframe(db, study_id, "information_domains"))
+needs_df = _canonical_only(cached_export_dataframe(db, study_id, "older_adult_needs"))
+present_df = info_df[info_df["value"] == "Present"] if not info_df.empty else info_df
+
 col3, col4 = st.columns(2)
 with col3:
-    st.caption("Information domains marked 'Present'")
-    info_df = cached_export_dataframe(db, study_id, "information_domains")
+    st.caption("Videos covering each information category (at least one item 'Present')")
     if info_df.empty:
         st.caption("No information-coverage coding yet.")
     else:
-        present = info_df[info_df["value"] == "Present"]["domain_name"].value_counts()
-        _bar_chart(present, "Videos", height=420)
+        _bar_chart(present_df.groupby("category")["video_pk"].nunique(), "Videos")
 
 with col4:
-    st.caption("Older-adult needs marked 'Addressed'")
-    needs_df = cached_export_dataframe(db, study_id, "older_adult_needs")
-    if needs_df.empty:
+    st.caption("% of coded videos mentioning each older-adult need")
+    answered = needs_df[needs_df["mentioned"].isin(["Yes", "No"])] if not needs_df.empty else needs_df
+    if answered.empty:
         st.caption("No older-adult-needs coding yet.")
     else:
-        addressed = needs_df[needs_df["value"] == "Addressed"]["need_name"].value_counts()
-        _bar_chart(addressed, "Videos", height=380)
+        pct = (
+            answered.assign(yes=answered["mentioned"] == "Yes")
+            .groupby("need_label")["yes"].mean().mul(100).round(1)
+        )
+        _bar_chart(pct, "% of coded videos")
+
+if not info_df.empty:
+    with st.expander("Information coverage by item"):
+        _bar_chart(
+            present_df.groupby("item_label")["video_pk"].nunique(), "Videos marked 'Present'",
+            height=760,
+        )
 
 st.markdown("---")
 st.subheader("Accuracy & screening")

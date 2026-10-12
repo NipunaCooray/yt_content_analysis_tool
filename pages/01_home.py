@@ -82,7 +82,7 @@ st.markdown(
 3. **Pilot search** — test queries on a small sample, rate relevance, refine, approve.
 4. **Full search results** — run the approved strategy at scale, deduplicate into the master video list.
 5. **Screening** — include/exclude/unsure each unique video, with reasons and notes.
-6. **Video coding** — characteristics, information coverage, older-adult needs, presentation.
+6. **Video coding** — characteristics, information coverage, older-adult needs.
 7. **Accuracy assessment** — claim-level fact-checking against official sources.
 8. **Reliability** — random double-screening/coding samples, percentage agreement, Cohen's kappa.
 9. **Dashboard** — study-wide progress and descriptive charts.

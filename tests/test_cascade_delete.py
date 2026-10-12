@@ -34,9 +34,8 @@ def fully_populated_study(db_session):
         db_session, study_id=study.id, video_pk=video.id, reviewer_id=reviewer.id,
         transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type="Media",
         intended_audience="General public", older_adult_targeted="No", notes=None,
-        information_domain_values={"Fares/payment": ("Present", None)},
-        older_adult_need_values={"Seating/rest": ("Addressed", None)},
-        presentation_values={"Captions available": ("Yes", None)},
+        information_domain_values={"payment_how_to_pay": ("Present", None)},
+        older_adult_need_values={"older_payment": ("Yes", None)},
         mark_complete=True,
     )
     crud.create_accuracy_claim(

@@ -103,15 +103,13 @@ def test_second_reviewer_coding_does_not_overwrite_first(db_session, study_with_
         db_session, study_id=study.id, video_pk=v.id, reviewer_id=r1.id,
         transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type="Media",
         intended_audience="General public", older_adult_targeted="No", notes=None,
-        information_domain_values=empty, older_adult_need_values=empty,
-        presentation_values=empty, mark_complete=True,
+        information_domain_values=empty, older_adult_need_values=empty, mark_complete=True,
     )
     coding_service.save_video_coding(
         db_session, study_id=study.id, video_pk=v.id, reviewer_id=r2.id,
         transport_modes=["Train"], jurisdictions=["VIC"], uploader_type="Government / transport authority",
         intended_audience="Older adults", older_adult_targeted="Yes", notes=None,
-        information_domain_values=empty, older_adult_need_values=empty,
-        presentation_values=empty, mark_complete=True,
+        information_domain_values=empty, older_adult_need_values=empty, mark_complete=True,
     )
 
     all_codings = crud.list_video_codings_for_video(db_session, v.id)
@@ -269,15 +267,13 @@ def test_coding_characteristics_reliability_end_to_end(db_session, study_with_tw
         db_session, study_id=study.id, video_pk=v.id, reviewer_id=r1.id,
         transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type="Media",
         intended_audience="General public", older_adult_targeted="No", notes=None,
-        information_domain_values=empty, older_adult_need_values=empty,
-        presentation_values=empty, mark_complete=True,
+        information_domain_values=empty, older_adult_need_values=empty, mark_complete=True,
     )
     coding_service.save_video_coding(
         db_session, study_id=study.id, video_pk=v.id, reviewer_id=r2.id,
         transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type="Media",
         intended_audience="Older adults", older_adult_targeted="Yes", notes=None,
-        information_domain_values=empty, older_adult_need_values=empty,
-        presentation_values=empty, mark_complete=True,
+        information_domain_values=empty, older_adult_need_values=empty, mark_complete=True,
     )
 
     double_coded = reliability_service.double_coded_videos(db_session, study.id, [v], "coding")
@@ -306,19 +302,29 @@ def test_domain_code_reliability_end_to_end(db_session, study_with_two_reviewers
         db_session, study_id=study.id, video_pk=v.id, reviewer_id=r1.id,
         transport_modes=[], jurisdictions=[], uploader_type=None, intended_audience=None,
         older_adult_targeted=None, notes=None,
-        information_domain_values={"Fares/payment": ("Present", None)},
-        older_adult_need_values={}, presentation_values={}, mark_complete=True,
+        information_domain_values={"payment_how_to_pay": ("Present", None)},
+        older_adult_need_values={"older_payment": ("Yes", "Opal card")}, mark_complete=True,
     )
     coding_service.save_video_coding(
         db_session, study_id=study.id, video_pk=v.id, reviewer_id=r2.id,
         transport_modes=[], jurisdictions=[], uploader_type=None, intended_audience=None,
         older_adult_targeted=None, notes=None,
-        information_domain_values={"Fares/payment": ("Absent", None)},
-        older_adult_need_values={}, presentation_values={}, mark_complete=True,
+        information_domain_values={"payment_how_to_pay": ("Absent", None)},
+        older_adult_need_values={"older_payment": ("Yes", None)}, mark_complete=True,
     )
 
     double_coded = reliability_service.double_coded_videos(db_session, study.id, [v], "coding")
     stats = reliability_service.information_domain_reliability(db_session, double_coded)
-    fares_stat = next(s for s in stats if s.field_name == "Fares/payment")
-    assert fares_stat.n_pairs == 1
-    assert fares_stat.percentage_agreement == 0.0
+    pay_stat = next(s for s in stats if s.field_name == "How to pay")
+    assert pay_stat.n_pairs == 1
+    assert pay_stat.percentage_agreement == 0.0
+    # Uncoded items on either side contribute no pair.
+    assert next(s for s in stats if s.field_name == "When to pay").n_pairs == 0
+
+    need_stats = reliability_service.older_adult_need_reliability(db_session, double_coded)
+    assert [s.field_name for s in need_stats] == [
+        "Journey Planning", "Payment", "Accessibility and safety", "Assistance seeking",
+    ]
+    pay_need = next(s for s in need_stats if s.field_name == "Payment")
+    assert pay_need.n_pairs == 1
+    assert pay_need.percentage_agreement == 100.0

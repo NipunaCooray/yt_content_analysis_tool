@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from db import crud
 from db.models import Video
-from utils.constants import INFORMATION_DOMAINS, OLDER_ADULT_NEEDS, PRESENTATION_ITEMS
+from utils.constants import INFORMATION_COVERAGE_ITEMS, OLDER_ADULT_NEED_ITEMS, CodingItem
 
 # ---------------------------------------------------------------------------
 # Generic agreement statistics
@@ -226,9 +226,11 @@ def coding_characteristics_reliability(
 
 
 def _domain_code_reliability(
-    db: Session, videos: list[Video], names: list[str], list_codes_fn
+    db: Session, videos: list[Video], items: list[CodingItem], list_codes_fn
 ) -> list[FieldReliability]:
-    field_pairs: dict[str, list[tuple[str, str]]] = {name: [] for name in names}
+    """Per-item agreement over the current framework's stable keys (legacy
+    rows under pre-revision names are ignored), reported by display label."""
+    field_pairs: dict[str, list[tuple[str, str]]] = {item.key: [] for item in items}
 
     for v in videos:
         codings = crud.list_video_codings_for_video(db, v.id)
@@ -238,33 +240,28 @@ def _domain_code_reliability(
         coding_a, coding_b = found
         codes_a = list_codes_fn(db, coding_a.id)
         codes_b = list_codes_fn(db, coding_b.id)
-        for name in names:
-            ca, cb = codes_a.get(name), codes_b.get(name)
+        for item in items:
+            ca, cb = codes_a.get(item.key), codes_b.get(item.key)
             if ca and cb and ca.value and cb.value:
-                field_pairs[name].append((ca.value, cb.value))
+                field_pairs[item.key].append((ca.value, cb.value))
 
     return [
         FieldReliability(
-            field_name=name, n_pairs=len(pairs),
-            percentage_agreement=percentage_agreement(pairs), kappa=cohens_kappa(pairs),
+            field_name=item.label, n_pairs=len(field_pairs[item.key]),
+            percentage_agreement=percentage_agreement(field_pairs[item.key]),
+            kappa=cohens_kappa(field_pairs[item.key]),
         )
-        for name, pairs in field_pairs.items()
+        for item in items
     ]
 
 
 def information_domain_reliability(db: Session, videos: list[Video]) -> list[FieldReliability]:
     return _domain_code_reliability(
-        db, videos, INFORMATION_DOMAINS, crud.list_information_domain_codes
+        db, videos, INFORMATION_COVERAGE_ITEMS, crud.list_information_domain_codes
     )
 
 
 def older_adult_need_reliability(db: Session, videos: list[Video]) -> list[FieldReliability]:
     return _domain_code_reliability(
-        db, videos, OLDER_ADULT_NEEDS, crud.list_older_adult_need_codes
-    )
-
-
-def presentation_reliability(db: Session, videos: list[Video]) -> list[FieldReliability]:
-    return _domain_code_reliability(
-        db, videos, PRESENTATION_ITEMS, crud.list_presentation_codes
+        db, videos, OLDER_ADULT_NEED_ITEMS, crud.list_older_adult_need_codes
     )

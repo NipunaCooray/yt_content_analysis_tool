@@ -143,10 +143,9 @@ else:
     )
     info_stats = reliability_service.information_domain_reliability(db, double_coded)
     need_stats = reliability_service.older_adult_need_reliability(db, double_coded)
-    pres_stats = reliability_service.presentation_reliability(db, double_coded)
 
-    tab_char, tab_info, tab_needs, tab_pres, tab_disagree = st.tabs(
-        ["Characteristics", "Information coverage", "Older-adult needs", "Presentation",
+    tab_char, tab_info, tab_needs, tab_disagree = st.tabs(
+        ["Characteristics", "Information coverage", "Older-adult needs",
          f"Disagreements ({len(char_disagreements)})"]
     )
     with tab_char:
@@ -156,14 +155,12 @@ else:
         st.dataframe(pd.DataFrame([_stat_row(s) for s in info_stats]), width="stretch", hide_index=True)
     with tab_needs:
         st.dataframe(pd.DataFrame([_stat_row(s) for s in need_stats]), width="stretch", hide_index=True)
-    with tab_pres:
-        st.dataframe(pd.DataFrame([_stat_row(s) for s in pres_stats]), width="stretch", hide_index=True)
     with tab_disagree:
         if char_disagreements:
             st.dataframe(_disagreements_df(char_disagreements), width="stretch", hide_index=True)
             st.caption(
                 "Characteristics disagreements only -- domain-level (information coverage/"
-                "older-adult needs/presentation) disagreements are reflected in each tab's "
+                "older-adult needs) disagreements are reflected in each tab's "
                 "agreement % and kappa above."
             )
         else:

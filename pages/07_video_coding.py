@@ -9,13 +9,14 @@ from db.database import get_session
 from services import coding_service
 from utils.constants import (
     AUDIENCE_TYPES,
-    COVERAGE_VALUES,
-    INFORMATION_DOMAINS,
+    INFORMATION_COVERAGE_CATEGORIES,
+    INFORMATION_COVERAGE_ITEMS,
+    INFORMATION_COVERAGE_VALUES,
     JURISDICTIONS,
-    NEED_VALUES,
-    OLDER_ADULT_NEEDS,
-    PRESENTATION_ITEMS,
-    PRESENTATION_VALUES,
+    OLDER_ADULT_NEED_ITEMS,
+    OLDER_ADULT_NEED_VALUES,
+    OLDER_ADULT_NEEDS_NOTE_PROMPT,
+    OLDER_ADULT_NEEDS_PROMPT,
     TRANSPORT_MODES,
     UPLOADER_TYPES,
     YES_NO_UNCLEAR,
@@ -33,8 +34,7 @@ current_study, current_reviewer = render_context_sidebar(db)
 
 page_header(
     "Video coding",
-    "Code included videos for characteristics, information coverage, older-adult needs, "
-    "and presentation.",
+    "Code included videos for characteristics, information coverage, and older-adult needs.",
 )
 
 if not require_study(current_study):
@@ -90,7 +90,7 @@ st.markdown("---")
 # Filters + navigation
 # ---------------------------------------------------------------------------
 
-filter_col1, filter_col2 = st.columns([2, 1])
+filter_col1, filter_col2 = st.columns([2, 1], vertical_alignment="bottom")
 status_filter = filter_col1.selectbox(
     "Filter by your status",
     ["All", coding_service.STATUS_NOT_STARTED, coding_service.STATUS_IN_PROGRESS,
@@ -192,8 +192,35 @@ with col_video:
                 st.caption("Full field-by-field comparison is on the Reliability page.")
 
 with col_form:
-    tab_char, tab_info, tab_needs, tab_pres = st.tabs(
-        ["Characteristics", "Information coverage", "Older-adult needs", "Presentation"]
+    # This reviewer's saved item codes. Rows from the pre-revision framework
+    # (stored under legacy names) are simply never looked up below, so they
+    # stay untouched in the database.
+    existing_domains = (
+        crud.list_information_domain_codes(db, my_current_coding.id) if my_current_coding else {}
+    )
+    existing_needs = (
+        crud.list_older_adult_need_codes(db, my_current_coding.id) if my_current_coding else {}
+    )
+
+    def _saved(rows: dict, key: str, field: str):
+        row = rows.get(key)
+        return getattr(row, field) if row else None
+
+    if coding_service.coding_status(my_current_coding) == coding_service.STATUS_COMPLETE and (
+        coding_service.missing_for_completion(
+            {i.key: _saved(existing_domains, i.key, "value") for i in INFORMATION_COVERAGE_ITEMS},
+            {i.key: _saved(existing_needs, i.key, "value") for i in OLDER_ADULT_NEED_ITEMS},
+        )
+    ):
+        st.info(
+            "This video was marked complete under the previous coding framework. The revised "
+            "information-coverage and older-adult-needs items are uncoded -- code them and save "
+            "to keep it complete.",
+            icon=":material/info:",
+        )
+
+    tab_char, tab_info, tab_needs = st.tabs(
+        ["Characteristics", "Information coverage", "Older-adult needs"]
     )
 
     with tab_char:
@@ -233,54 +260,69 @@ with col_form:
             key=f"char_notes_{current_pk}",
         )
 
-    def _domain_section(title: str, names: list[str], values: list[str], existing: dict, key_prefix: str):
-        st.caption(title)
-        results: dict[str, tuple[str, str | None]] = {}
-        for name in names:
-            row = existing.get(name)
-            c1, c2, c3 = st.columns([3, 2, 3])
-            c1.markdown(f"<div style='padding-top:0.5rem'>{name}</div>", unsafe_allow_html=True)
-            default_value = row.value if row and row.value in values else values[-1]
-            value = c2.selectbox(
-                name, values, index=values.index(default_value),
-                key=f"{key_prefix}_{name}_{current_pk}", label_visibility="collapsed",
-            )
-            note = c3.text_input(
-                f"{name} notes", value=(row.notes if row else "") or "",
-                key=f"{key_prefix}_notes_{name}_{current_pk}",
-                placeholder="Notes (optional)", label_visibility="collapsed",
-            )
-            results[name] = (value, note or None)
-        return results
-
     with tab_info:
-        existing_domains = (
-            crud.list_information_domain_codes(db, my_current_coding.id) if my_current_coding else {}
-        )
-        information_domain_values = _domain_section(
-            "For each domain, is this information present in the video?",
-            INFORMATION_DOMAINS, COVERAGE_VALUES, existing_domains, "domain",
-        )
+        st.caption("For each item, is this information present in the video?")
+        information_domain_values: dict[str, tuple[str | None, str | None]] = {}
+        for group_index, category in enumerate(INFORMATION_COVERAGE_CATEGORIES):
+            items = [i for i in INFORMATION_COVERAGE_ITEMS if i.category == category]
+            value_keys = {i.key: f"ic_{i.key}_{current_pk}" for i in items}
+            # Count from widget state when it exists (this rerun's edits),
+            # otherwise from what's saved -- so the label stays current.
+            n_coded = sum(
+                1 for i in items
+                if st.session_state.get(value_keys[i.key], _saved(existing_domains, i.key, "value"))
+            )
+            all_coded = n_coded == len(items)
+            with st.expander(
+                f"{category} · {n_coded}/{len(items)} coded",
+                icon=":material/check_circle:" if all_coded else None,
+                # Keyed so the label's changing count doesn't remount (and
+                # collapse) the expander mid-coding.
+                key=f"ic_group_{group_index}_{current_pk}",
+            ):
+                for item in items:
+                    saved_value = _saved(existing_domains, item.key, "value")
+                    c1, c2 = st.columns([3, 2], vertical_alignment="bottom")
+                    with c1:
+                        value = st.segmented_control(
+                            item.label, INFORMATION_COVERAGE_VALUES,
+                            default=saved_value if saved_value in INFORMATION_COVERAGE_VALUES else None,
+                            key=value_keys[item.key],
+                        )
+                    with c2:
+                        note = st.text_input(
+                            f"{item.label} notes",
+                            value=_saved(existing_domains, item.key, "notes") or "",
+                            key=f"ic_notes_{item.key}_{current_pk}",
+                            placeholder="Notes (optional)", label_visibility="collapsed",
+                        )
+                    information_domain_values[item.key] = (value, note or None)
 
     with tab_needs:
-        existing_needs = (
-            crud.list_older_adult_need_codes(db, my_current_coding.id) if my_current_coding else {}
-        )
-        older_adult_need_values = _domain_section(
-            "For each need, is it addressed in the video?",
-            OLDER_ADULT_NEEDS, NEED_VALUES, existing_needs, "need",
-        )
-
-    with tab_pres:
-        existing_presentation = (
-            crud.list_presentation_codes(db, my_current_coding.id) if my_current_coding else {}
-        )
-        presentation_values = _domain_section(
-            "How is the information presented?",
-            PRESENTATION_ITEMS, PRESENTATION_VALUES, existing_presentation, "presentation",
-        )
+        st.caption(OLDER_ADULT_NEEDS_PROMPT)
+        older_adult_need_values: dict[str, tuple[str | None, str | None]] = {}
+        for item in OLDER_ADULT_NEED_ITEMS:
+            with st.container(border=True):
+                saved_value = _saved(existing_needs, item.key, "value")
+                mentioned = st.segmented_control(
+                    item.label, OLDER_ADULT_NEED_VALUES,
+                    default=saved_value if saved_value in OLDER_ADULT_NEED_VALUES else None,
+                    key=f"need_{item.key}_{current_pk}",
+                )
+                note = None
+                if mentioned == "Yes":
+                    note = st.text_area(
+                        OLDER_ADULT_NEEDS_NOTE_PROMPT,
+                        value=_saved(existing_needs, item.key, "notes") or "",
+                        key=f"need_notes_{item.key}_{current_pk}",
+                        height=80,
+                    )
+                older_adult_need_values[item.key] = (mentioned, note or None)
 
     st.markdown("---")
+    incomplete_warning = st.session_state.pop("coding_incomplete_warning", None)
+    if incomplete_warning:
+        st.warning(incomplete_warning, icon=":material/warning:")
     mark_complete = st.checkbox(
         "Mark this video's coding as complete",
         value=coding_service.coding_status(my_current_coding) == coding_service.STATUS_COMPLETE,
@@ -288,7 +330,7 @@ with col_form:
     )
 
     def _save(advance: bool):
-        coding_service.save_video_coding(
+        saved = coding_service.save_video_coding(
             db,
             study_id=study_id,
             video_pk=current_pk,
@@ -301,9 +343,18 @@ with col_form:
             notes=char_notes or None,
             information_domain_values=information_domain_values,
             older_adult_need_values=older_adult_need_values,
-            presentation_values=presentation_values,
             mark_complete=mark_complete,
         )
+        if mark_complete and saved.status != coding_service.STATUS_COMPLETE:
+            missing = coding_service.missing_for_completion(
+                {k: v for k, (v, _) in information_domain_values.items()},
+                {k: v for k, (v, _) in older_adult_need_values.items()},
+            )
+            shown = "; ".join(missing[:5]) + (f"; and {len(missing) - 5} more" if len(missing) > 5 else "")
+            st.session_state["coding_incomplete_warning"] = (
+                f"Saved \"{current_video.title}\" as in progress, not complete -- "
+                f"{len(missing)} item(s) still uncoded: {shown}."
+            )
         if advance and idx < len(filtered) - 1:
             st.session_state["coding_current_video_pk"] = filtered_ids[idx + 1]
         close_and_rerun(db)

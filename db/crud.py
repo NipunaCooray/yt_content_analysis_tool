@@ -746,7 +746,7 @@ def list_information_domain_codes(db: Session, video_coding_id: int) -> dict[str
 
 
 def upsert_information_domain_code(
-    db: Session, video_coding_id: int, domain_name: str, value: str, notes: str | None
+    db: Session, video_coding_id: int, domain_name: str, value: str | None, notes: str | None
 ) -> InformationDomainCode:
     stmt = select(InformationDomainCode).where(
         InformationDomainCode.video_coding_id == video_coding_id,
@@ -770,7 +770,7 @@ def list_older_adult_need_codes(db: Session, video_coding_id: int) -> dict[str, 
 
 
 def upsert_older_adult_need_code(
-    db: Session, video_coding_id: int, need_name: str, value: str, notes: str | None
+    db: Session, video_coding_id: int, need_name: str, value: str | None, notes: str | None
 ) -> OlderAdultNeedCode:
     stmt = select(OlderAdultNeedCode).where(
         OlderAdultNeedCode.video_coding_id == video_coding_id,
@@ -788,28 +788,9 @@ def upsert_older_adult_need_code(
     return existing
 
 
-def list_presentation_codes(db: Session, video_coding_id: int) -> dict[str, PresentationCode]:
-    stmt = select(PresentationCode).where(PresentationCode.video_coding_id == video_coding_id)
-    return {row.item_name: row for row in db.execute(stmt).scalars().all()}
-
-
-def upsert_presentation_code(
-    db: Session, video_coding_id: int, item_name: str, value: str, notes: str | None
-) -> PresentationCode:
-    stmt = select(PresentationCode).where(
-        PresentationCode.video_coding_id == video_coding_id,
-        PresentationCode.item_name == item_name,
-    )
-    existing = db.execute(stmt).scalars().first()
-    if existing is None:
-        existing = PresentationCode(
-            video_coding_id=video_coding_id, item_name=item_name, value=value, notes=notes
-        )
-        db.add(existing)
-    else:
-        existing.value = value
-        existing.notes = notes
-    return existing
+# Presentation coding is no longer collected (removed after researcher user
+# testing) -- there is deliberately no upsert for presentation_codes any
+# more. Legacy rows are only read, for the legacy export below.
 
 
 # ---------------------------------------------------------------------------
@@ -972,6 +953,7 @@ def list_all_older_adult_need_codes_for_study(db: Session, study_id: int) -> lis
 
 
 def list_all_presentation_codes_for_study(db: Session, study_id: int) -> list[PresentationCode]:
+    """Legacy presentation coding (no longer collected), for the archive export."""
     stmt = (
         select(PresentationCode)
         .join(VideoCoding, PresentationCode.video_coding_id == VideoCoding.id)
