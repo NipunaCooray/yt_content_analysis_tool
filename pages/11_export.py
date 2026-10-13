@@ -39,18 +39,16 @@ st.download_button(
     type="primary",
 )
 st.caption(
-    f"{required_count} required datasets plus {bonus_count} additional datasets: reliability "
-    "(every reviewer's independent screening/coding records, and computed agreement/kappa — "
-    "see the Reliability page) and archived legacy coding from the pre-revision framework. "
-    "Each is also available individually below, as CSV (priority format) or JSON."
+    f"{required_count} current datasets plus {bonus_count} archived legacy datasets (coding "
+    "and accuracy claims from before the framework revision). Each is also available "
+    "individually below, as CSV (priority format) or JSON."
 )
 
 st.markdown("---")
 
 for dataset in export_service.EXPORT_DATASETS:
     df = dataframes[dataset.key]
-    badge = "" if dataset.required else " 🎯"
-    with st.expander(f"{dataset.label}{badge} — {len(df)} row{'s' if len(df) != 1 else ''}"):
+    with st.expander(f"{dataset.label} — {len(df)} row{'s' if len(df) != 1 else ''}"):
         if df.empty:
             st.caption("No data yet for this dataset.")
         else:

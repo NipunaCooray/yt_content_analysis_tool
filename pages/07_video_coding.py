@@ -45,9 +45,8 @@ if not require_study(current_study):
 
 if current_reviewer is None:
     st.warning(
-        "Select a reviewer in the sidebar before coding — each reviewer's coding is kept "
-        "separately so a second reviewer's coding never overwrites the first's (needed for "
-        "double coding; see the Reliability page).",
+        "Select a reviewer in the sidebar before coding — saves are attributed to the "
+        "selected reviewer.",
         icon="👤",
     )
     db.close()
@@ -64,27 +63,19 @@ if not included_videos:
     db.close()
     st.stop()
 
-# Canonical (earliest-reviewer) coding drives study-wide progress/gating;
-# this reviewer's own coding drives their personal queue below.
-canonical_codings = crud.list_video_codings(db, study_id)
-my_codings = crud.list_video_codings_for_reviewer(db, study_id, current_reviewer.id)
-double_coding_sample = crud.list_double_coding_sample_video_ids(db, study_id, "coding")
+# One coding record per video, shared by whoever codes it.
+codings = crud.list_video_codings(db, study_id)
 
 # ---------------------------------------------------------------------------
 # Progress
 # ---------------------------------------------------------------------------
 
-progress = coding_service.compute_progress([v.id for v in included_videos], canonical_codings)
+progress = coding_service.compute_progress([v.id for v in included_videos], codings)
 p1, p2, p3, p4 = st.columns(4)
 p1.metric("Included videos", progress.total)
 p2.metric("Not started", progress.not_started)
 p3.metric("In progress", progress.in_progress)
 p4.metric("Complete", progress.complete)
-my_complete = sum(
-    1 for v in included_videos
-    if coding_service.coding_status(my_codings.get(v.id)) == coding_service.STATUS_COMPLETE
-)
-st.caption(f"Your progress ({current_reviewer.name}): {my_complete} of {len(included_videos)} complete.")
 
 st.markdown("---")
 
@@ -94,31 +85,26 @@ st.markdown("---")
 
 filter_col1, filter_col2 = st.columns([2, 1], vertical_alignment="bottom")
 status_filter = filter_col1.selectbox(
-    "Filter by your status",
+    "Filter by status",
     ["All", coding_service.STATUS_NOT_STARTED, coding_service.STATUS_IN_PROGRESS,
      coding_service.STATUS_COMPLETE],
 )
 if filter_col2.button("▶ Resume last uncoded"):
     next_uncoded = next(
         (v for v in included_videos
-         if coding_service.coding_status(my_codings.get(v.id)) != coding_service.STATUS_COMPLETE),
+         if coding_service.coding_status(codings.get(v.id)) != coding_service.STATUS_COMPLETE),
         None,
     )
     if next_uncoded:
         st.session_state["coding_current_video_pk"] = next_uncoded.id
         close_and_rerun(db)
     else:
-        st.toast("You've fully coded every included video.", icon="✅")
-
-sample_only = st.checkbox(
-    f"Double-coding sample only ({len(double_coding_sample)} video(s) selected — see Reliability page)"
-)
+        st.toast("Every included video is fully coded.", icon="✅")
 
 filtered = [
     v for v in included_videos
     if (status_filter == "All"
-        or coding_service.coding_status(my_codings.get(v.id)) == status_filter)
-    and (not sample_only or v.id in double_coding_sample)
+        or coding_service.coding_status(codings.get(v.id)) == status_filter)
 ]
 
 if not filtered:
@@ -133,8 +119,7 @@ if current_pk not in filtered_ids:
 idx = filtered_ids.index(current_pk)
 
 jump_labels = {
-    v.id: f"{STATUS_ICONS[coding_service.coding_status(my_codings.get(v.id))]} "
-    f"{'🔁 ' if v.id in double_coding_sample else ''}{v.title[:65]}"
+    v.id: f"{STATUS_ICONS[coding_service.coding_status(codings.get(v.id))]} {v.title[:65]}"
     for v in filtered
 }
 jump_pk = st.selectbox(
@@ -149,10 +134,8 @@ if jump_pk != current_pk:
 st.session_state["coding_current_video_pk"] = current_pk
 
 current_video = crud.get_video(db, current_pk)
-my_current_coding = my_codings.get(current_pk)
+current_coding = codings.get(current_pk)
 st.caption(f"Video {idx + 1} of {len(filtered)} (filtered) — {len(included_videos)} included total")
-if current_pk in double_coding_sample:
-    st.info("🔁 This video is in the double-coding sample.", icon="🔁")
 
 # ---------------------------------------------------------------------------
 # Video + coding form
@@ -173,42 +156,27 @@ with col_video:
             st.write(current_video.description)
     if current_video.video_url:
         st.link_button("Open on YouTube", current_video.video_url)
-
-    # Other reviewers' coding is only revealed once *you* have coded this
-    # video yourself -- keeps double coding blind until completion (study-
-    # initiation guide section 42).
-    if my_current_coding is not None:
-        all_codings = crud.list_video_codings_for_video(db, current_pk)
-        others = [c for c in all_codings if c.reviewer_id != current_reviewer.id]
-        if others:
-            reviewer_names = {r.id: r.name for r in crud.list_reviewers(db)}
-            with st.expander(f"Other reviewers' coding ({len(others)})"):
-                for c in others:
-                    st.write(f"**{reviewer_names.get(c.reviewer_id, 'Unknown')}**")
-                    st.caption(
-                        f"Modes: {', '.join(c.transport_modes_json or []) or '—'} · "
-                        f"Jurisdictions: {', '.join(c.jurisdictions_json or []) or '—'} · "
-                        f"Uploader: {c.uploader_type or '—'} · Audience: {c.intended_audience or '—'} · "
-                        f"Older-adult targeted: {c.older_adult_targeted or '—'}"
-                    )
-                st.caption("Full field-by-field comparison is on the Reliability page.")
+    if current_coding is not None and current_coding.reviewer_id is not None:
+        last_saved_by = crud.get_reviewer(db, current_coding.reviewer_id)
+        if last_saved_by is not None:
+            st.caption(f"Last saved by {last_saved_by.name}.")
 
 with col_form:
-    # This reviewer's saved item codes. Rows from the pre-revision framework
+    # The video's saved item codes. Rows from the pre-revision framework
     # (stored under legacy names) are simply never looked up below, so they
     # stay untouched in the database.
     existing_domains = (
-        crud.list_information_domain_codes(db, my_current_coding.id) if my_current_coding else {}
+        crud.list_information_domain_codes(db, current_coding.id) if current_coding else {}
     )
     existing_needs = (
-        crud.list_older_adult_need_codes(db, my_current_coding.id) if my_current_coding else {}
+        crud.list_older_adult_need_codes(db, current_coding.id) if current_coding else {}
     )
 
     def _saved(rows: dict, key: str, field: str):
         row = rows.get(key)
         return getattr(row, field) if row else None
 
-    if coding_service.coding_status(my_current_coding) == coding_service.STATUS_COMPLETE and (
+    if coding_service.coding_status(current_coding) == coding_service.STATUS_COMPLETE and (
         coding_service.missing_for_completion(
             {i.key: _saved(existing_domains, i.key, "value") for i in INFORMATION_COVERAGE_ITEMS},
             {i.key: _saved(existing_needs, i.key, "value") for i in OLDER_ADULT_NEED_ITEMS},
@@ -226,13 +194,13 @@ with col_form:
     )
 
     with tab_char:
-        default_modes = my_current_coding.transport_modes_json if my_current_coding else []
+        default_modes = current_coding.transport_modes_json if current_coding else []
         transport_modes = st.multiselect(
             "Transport mode(s)", TRANSPORT_MODES,
             default=[m for m in (default_modes or []) if m in TRANSPORT_MODES],
             key=f"modes_{current_pk}",
         )
-        default_jurisdictions = my_current_coding.jurisdictions_json if my_current_coding else []
+        default_jurisdictions = current_coding.jurisdictions_json if current_coding else []
         jurisdictions = st.multiselect(
             "Jurisdiction(s)", JURISDICTIONS,
             default=[j for j in (default_jurisdictions or []) if j in JURISDICTIONS],
@@ -240,30 +208,30 @@ with col_form:
         )
         uploader_type = st.selectbox(
             "Uploader type", UPLOADER_TYPES,
-            index=UPLOADER_TYPES.index(my_current_coding.uploader_type)
-            if my_current_coding and my_current_coding.uploader_type in UPLOADER_TYPES else 0,
+            index=UPLOADER_TYPES.index(current_coding.uploader_type)
+            if current_coding and current_coding.uploader_type in UPLOADER_TYPES else 0,
             key=f"uploader_{current_pk}",
         )
         intended_audience = st.selectbox(
             "Audience", AUDIENCE_TYPES,
-            index=AUDIENCE_TYPES.index(my_current_coding.intended_audience)
-            if my_current_coding and my_current_coding.intended_audience in AUDIENCE_TYPES else 0,
+            index=AUDIENCE_TYPES.index(current_coding.intended_audience)
+            if current_coding and current_coding.intended_audience in AUDIENCE_TYPES else 0,
             key=f"audience_{current_pk}",
         )
         older_adult_targeted = st.radio(
             "Specifically aimed at older adults?", YES_NO_UNCLEAR,
-            index=YES_NO_UNCLEAR.index(my_current_coding.older_adult_targeted)
-            if my_current_coding and my_current_coding.older_adult_targeted in YES_NO_UNCLEAR else 2,
+            index=YES_NO_UNCLEAR.index(current_coding.older_adult_targeted)
+            if current_coding and current_coding.older_adult_targeted in YES_NO_UNCLEAR else 2,
             key=f"oa_targeted_{current_pk}",
             horizontal=True,
         )
         char_notes = st.text_area(
-            "Notes", value=(my_current_coding.notes if my_current_coding else "") or "",
+            "Notes", value=(current_coding.notes if current_coding else "") or "",
             key=f"char_notes_{current_pk}",
         )
         accuracy_notes = st.text_area(
             ACCURACY_NOTES_LABEL,
-            value=(my_current_coding.accuracy_notes if my_current_coding else "") or "",
+            value=(current_coding.accuracy_notes if current_coding else "") or "",
             key=f"accuracy_notes_{current_pk}",
         )
         st.caption(ACCURACY_NOTES_HELP)
@@ -333,7 +301,7 @@ with col_form:
         st.warning(incomplete_warning, icon=":material/warning:")
     mark_complete = st.checkbox(
         "Mark this video's coding as complete",
-        value=coding_service.coding_status(my_current_coding) == coding_service.STATUS_COMPLETE,
+        value=coding_service.coding_status(current_coding) == coding_service.STATUS_COMPLETE,
         key=f"mark_complete_{current_pk}",
     )
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from db import crud
-from db.models import AccuracyClaim, AccuracyReviewStatus
+from db.models import AccuracyClaim, AccuracyReviewStatus, DoubleCodingSample
 from services import coding_service
 
 
@@ -49,7 +49,9 @@ def fully_populated_study(db_session):
                              is_complete=True),
     ])
     db_session.commit()
-    crud.select_random_double_coding_sample(db_session, study.id, "screening", [video.id], 100)
+    # Legacy double-coding sample row (no longer used, but the table remains).
+    db_session.add(DoubleCodingSample(study_id=study.id, video_id=video.id, stage="screening"))
+    db_session.commit()
     run = crud.create_pilot_search_run(db_session, study_id=study.id, reviewer_id=reviewer.id)
     crud.add_pilot_search_result(
         db_session, pilot_search_run_id=run.id, query_id=query.id, video_id="v1", result_rank=1,
@@ -71,7 +73,7 @@ def test_deleting_a_study_cascades_through_every_dependent_table(db_session, ful
     assert crud.list_video_codings(db_session, study.id) == {}
     assert db_session.query(AccuracyClaim).count() == 0
     assert db_session.query(AccuracyReviewStatus).count() == 0
-    assert crud.list_double_coding_sample_video_ids(db_session, study.id, "screening") == set()
+    assert db_session.query(DoubleCodingSample).count() == 0
     assert crud.list_pilot_search_runs(db_session, study.id) == []
     assert crud.list_audit_log(db_session, study_id=study.id) == []
     # Search queries belong to (are owned by) the study, so they cascade too.

@@ -2,7 +2,8 @@
 accuracy notes), and the two domain-coding sections (information coverage,
 older-adult needs) as revised after researcher user testing. Presentation
 coding and the claim-level accuracy assessment were removed: legacy rows are
-preserved, but no new ones are collected and completion doesn't need them."""
+preserved, but no new ones are collected and completion doesn't need them.
+There is no double coding: each video has one coding record."""
 
 from __future__ import annotations
 
@@ -15,9 +16,11 @@ from db import crud
 from db.models import (
     AccuracyClaim,
     AccuracyReviewStatus,
+    DoubleCodingSample,
     InformationDomainCode,
     OlderAdultNeedCode,
     PresentationCode,
+    VideoCoding,
 )
 from services import coding_service
 from tests.coding_helpers import full_information_coverage, full_older_adult_needs
@@ -255,24 +258,95 @@ def test_save_video_coding_upserts_in_place_without_duplicating_rows(db_session,
     assert len(crud.list_video_codings(db_session, study.id)) == 1
 
 
-def test_reviewers_coding_the_same_video_stay_independent(db_session, study_with_included_video):
+def test_a_second_reviewer_edits_the_same_coding_record(db_session, study_with_included_video):
+    """One coding record per video: whoever saves edits that record, and
+    reviewer_id records who saved it last."""
     study, reviewer, included, _ = study_with_included_video
     other = crud.create_reviewer(db_session, name="Second", initials="SE")
 
     a = _save(db_session, study, included, reviewer.id,
               full_information_coverage(payment_how_to_pay=("Present", "A's note")),
-              full_older_adult_needs(older_payment=("Yes", "A mentions fares")))
+              full_older_adult_needs(older_payment=("Yes", "A mentions fares")),
+              accuracy_notes="A's concern")
     b = _save(db_session, study, included, other.id,
               full_information_coverage(payment_how_to_pay=("Absent", None)),
-              full_older_adult_needs(older_payment=("Yes", "B mentions concessions")))
+              full_older_adult_needs(older_payment=("Yes", "B mentions concessions")),
+              accuracy_notes="B's concern")
 
-    assert a.id != b.id
-    a_info = crud.list_information_domain_codes(db_session, a.id)
-    b_info = crud.list_information_domain_codes(db_session, b.id)
-    assert (a_info["payment_how_to_pay"].value, a_info["payment_how_to_pay"].notes) == ("Present", "A's note")
-    assert b_info["payment_how_to_pay"].value == "Absent"
-    assert crud.list_older_adult_need_codes(db_session, a.id)["older_payment"].notes == "A mentions fares"
+    assert a.id == b.id
+    assert db_session.query(VideoCoding).count() == 1
+    assert b.reviewer_id == other.id
+    assert b.coded_at == a.coded_at  # first-coded time is kept
+    assert b.accuracy_notes == "B's concern"
+    info = crud.list_information_domain_codes(db_session, b.id)
+    assert info["payment_how_to_pay"].value == "Absent"
+    assert len(info) == len(INFORMATION_COVERAGE_ITEMS)
     assert crud.list_older_adult_need_codes(db_session, b.id)["older_payment"].notes == "B mentions concessions"
+
+
+def test_database_rejects_a_second_coding_record_for_a_video(db_session, study_with_included_video):
+    from sqlalchemy.exc import IntegrityError
+
+    study, reviewer, included, _ = study_with_included_video
+    _save(db_session, study, included, reviewer.id, {}, {})
+    db_session.add(VideoCoding(study_id=study.id, video_id=included.id, reviewer_id=reviewer.id))
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+
+def test_legacy_duplicate_codings_are_kept_and_the_earliest_is_used(legacy_db_session):
+    """Older databases may still hold per-reviewer duplicates from the
+    double-coding era: they must not cause errors, are never deleted, and
+    the earliest record is the one shown and edited."""
+    db = legacy_db_session
+    study = crud.create_study(db, name="Legacy study")
+    first = crud.create_reviewer(db, name="First", initials="FR")
+    second = crud.create_reviewer(db, name="Second", initials="SR")
+    video = crud.create_video(db, study_id=study.id, video_id="v1", title="Video")
+    db.commit()
+    older = VideoCoding(study_id=study.id, video_id=video.id, reviewer_id=first.id,
+                        transport_modes_json=["Bus"], coded_at=datetime.datetime(2026, 1, 1))
+    newer = VideoCoding(study_id=study.id, video_id=video.id, reviewer_id=second.id,
+                        transport_modes_json=["Train"], coded_at=datetime.datetime(2026, 2, 1))
+    db.add_all([older, newer])
+    db.commit()
+
+    assert crud.get_video_coding(db, video.id).id == older.id
+    assert list(crud.list_video_codings(db, study.id).values())[0].id == older.id
+
+    saved = _save(db, study, video, second.id, full_information_coverage(),
+                  full_older_adult_needs(), mark_complete=True, transport_modes=["Ferry"])
+    assert saved.id == older.id
+    assert db.query(VideoCoding).count() == 2  # the legacy duplicate is preserved
+    db.refresh(newer)
+    assert newer.transport_modes_json == ["Train"]  # and left untouched
+
+
+def test_legacy_duplicate_screening_decisions_are_kept_and_the_earliest_is_used(legacy_db_session):
+    from db.models import ScreeningDecision
+
+    db = legacy_db_session
+    study = crud.create_study(db, name="Legacy study")
+    first = crud.create_reviewer(db, name="First", initials="FR")
+    second = crud.create_reviewer(db, name="Second", initials="SR")
+    video = crud.create_video(db, study_id=study.id, video_id="v1", title="Video")
+    db.commit()
+    db.add_all([
+        ScreeningDecision(study_id=study.id, video_id=video.id, reviewer_id=first.id,
+                          decision="Include", screened_at=datetime.datetime(2026, 1, 1)),
+        ScreeningDecision(study_id=study.id, video_id=video.id, reviewer_id=second.id,
+                          decision="Exclude", screened_at=datetime.datetime(2026, 2, 1)),
+    ])
+    db.commit()
+
+    assert crud.get_screening_decision(db, video.id).decision == "Include"
+    assert [v.id for v in crud.list_included_videos(db, study.id)] == [video.id]
+
+    crud.upsert_screening_decision(db, study_id=study.id, video_pk=video.id, reviewer_id=second.id,
+                                   decision="Unsure", exclusion_reason=None, notes=None)
+    assert crud.get_screening_decision(db, video.id).decision == "Unsure"
+    assert db.query(ScreeningDecision).count() == 2
 
 
 def test_unknown_or_legacy_item_keys_are_rejected(db_session, study_with_included_video):
@@ -296,24 +370,15 @@ def test_accuracy_notes_save_edit_and_clear(db_session, study_with_included_vide
     study, reviewer, included, _ = study_with_included_video
     note = "The video states that seniors travel free after 9 am, but this may be outdated."
     coding = _save(db_session, study, included, reviewer.id, {}, {}, accuracy_notes=note)
-    assert crud.get_video_coding(db_session, included.id, reviewer.id).accuracy_notes == note
+    assert crud.get_video_coding(db_session, included.id).accuracy_notes == note
 
     _save(db_session, study, included, reviewer.id, {}, {}, accuracy_notes="Revised concern")
-    assert crud.get_video_coding(db_session, included.id, reviewer.id).accuracy_notes == "Revised concern"
+    assert crud.get_video_coding(db_session, included.id).accuracy_notes == "Revised concern"
 
     _save(db_session, study, included, reviewer.id, {}, {}, accuracy_notes=None)
-    reloaded = crud.get_video_coding(db_session, included.id, reviewer.id)
+    reloaded = crud.get_video_coding(db_session, included.id)
     assert reloaded.id == coding.id
     assert reloaded.accuracy_notes is None
-
-
-def test_accuracy_notes_are_reviewer_specific(db_session, study_with_included_video):
-    study, reviewer, included, _ = study_with_included_video
-    other = crud.create_reviewer(db_session, name="Second", initials="SE")
-    _save(db_session, study, included, reviewer.id, {}, {}, accuracy_notes="A's concern")
-    _save(db_session, study, included, other.id, {}, {}, accuracy_notes=None)
-    assert crud.get_video_coding(db_session, included.id, reviewer.id).accuracy_notes == "A's concern"
-    assert crud.get_video_coding(db_session, included.id, other.id).accuracy_notes is None
 
 
 # ---------------------------------------------------------------------------
@@ -422,9 +487,10 @@ PAGE = str(Path(__file__).resolve().parent.parent / "pages" / "07_video_coding.p
 
 
 @pytest.fixture()
-def coding_page(monkeypatch, tmp_path):
+def coding_page(monkeypatch, tmp_path, request):
     """The video coding page, backed by a temp SQLite database holding one
-    study, two reviewers and one included video."""
+    study, two reviewers and one included video. Parametrize indirectly with
+    True to start from the pre-single-record schema (legacy duplicates)."""
     import db.database as database
     from components.caching import invalidate_reviewer_options, invalidate_study_options
 
@@ -436,6 +502,14 @@ def coding_page(monkeypatch, tmp_path):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("APP_ENV", raising=False)
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "coding.db"))
+    if getattr(request, "param", False):
+        from sqlalchemy import create_engine
+
+        from tests.conftest import create_pre_single_record_schema
+
+        legacy_engine = create_engine(f"sqlite:///{tmp_path / 'coding.db'}")
+        create_pre_single_record_schema(legacy_engine)  # init_db then finds the tables exist
+        legacy_engine.dispose()
     # The sidebar's study/reviewer lists are cached across runs; don't let a
     # previous test's database leak into this one.
     invalidate_study_options()
@@ -494,10 +568,12 @@ def test_characteristics_tab_keeps_its_fields_and_adds_accuracy_notes_last(codin
     assert any(c.value == ACCURACY_NOTES_HELP for c in char_tab.caption)
 
 
-def test_accuracy_assessment_page_is_gone_from_navigation():
+def test_removed_pages_are_gone_from_navigation():
     root = Path(PAGE).parent.parent
-    assert "accuracy" not in (root / "app.py").read_text().lower()
-    assert not list((root / "pages").glob("*accuracy*"))
+    nav = (root / "app.py").read_text().lower()
+    for removed in ["accuracy", "reliability"]:
+        assert removed not in nav
+        assert not list((root / "pages").glob(f"*{removed}*"))
 
 
 def test_page_renders_all_categories_and_items(coding_page):
@@ -538,7 +614,7 @@ def test_page_saves_and_reloads_coding(coding_page):
     _click(at, "Save")
 
     session = get_session()
-    coding = crud.get_video_coding(session, ids["video"], ids["first"])
+    coding = crud.get_video_coding(session, ids["video"])
     assert coding.status == coding_service.STATUS_IN_PROGRESS
     assert coding.accuracy_notes == "Fare may be outdated."
     assert crud.list_information_domain_codes(session, coding.id)["payment_how_to_pay"].value == "Present"
@@ -565,7 +641,7 @@ def test_page_mark_complete_requires_full_coding(coding_page):
 
     assert any("not complete" in w.value for w in at.warning)
     session = get_session()
-    assert crud.get_video_coding(session, ids["video"], ids["first"]).status == coding_service.STATUS_IN_PROGRESS
+    assert crud.get_video_coding(session, ids["video"]).status == coding_service.STATUS_IN_PROGRESS
     session.close()
 
     for control in at.segmented_control:
@@ -574,11 +650,11 @@ def test_page_mark_complete_requires_full_coding(coding_page):
     _click(at, "Save")
 
     session = get_session()
-    assert crud.get_video_coding(session, ids["video"], ids["first"]).status == coding_service.STATUS_COMPLETE
+    assert crud.get_video_coding(session, ids["video"]).status == coding_service.STATUS_COMPLETE
     session.close()
 
 
-def test_page_reviewers_code_independently(coding_page):
+def test_page_reviewers_share_one_coding_record(coding_page):
     at, get_session, ids = coding_page
     at.run()
     _control(at, "How to pay").set_value("Present").run()
@@ -589,15 +665,49 @@ def test_page_reviewers_code_independently(coding_page):
     second = AppTest.from_file(PAGE, default_timeout=60)
     second.session_state["current_reviewer_id"] = ids["second"]
     second.run()
-    assert _control(second, "How to pay").value is None  # first reviewer's coding isn't loaded
+    assert _control(second, "How to pay").value == "Present"  # sees the shared record
+    assert any(c.value == "Last saved by First." for c in second.caption)
+    assert not any("other reviewer" in e.label.lower() for e in second.expander)
     _control(second, "How to pay").set_value("Absent").run()
     _click(second, "Save")
 
     session = get_session()
-    first_coding = crud.get_video_coding(session, ids["video"], ids["first"])
-    second_coding = crud.get_video_coding(session, ids["video"], ids["second"])
-    assert crud.list_information_domain_codes(session, first_coding.id)["payment_how_to_pay"].value == "Present"
-    assert crud.list_information_domain_codes(session, second_coding.id)["payment_how_to_pay"].value == "Absent"
+    assert session.query(VideoCoding).count() == 1
+    coding = crud.get_video_coding(session, ids["video"])
+    assert coding.reviewer_id == ids["second"]
+    assert crud.list_information_domain_codes(session, coding.id)["payment_how_to_pay"].value == "Absent"
+    session.close()
+
+
+def test_page_shows_no_double_coding_controls(coding_page):
+    at, _, _ = coding_page
+    at.run()
+    assert not any("double" in c.label.lower() for c in at.checkbox)
+    assert [s.label for s in at.selectbox if s.label.startswith("Filter")] == ["Filter by status"]
+    assert not any("progress (" in c.value.lower() for c in at.caption)  # no per-reviewer progress
+
+
+@pytest.mark.parametrize("coding_page", [True], indirect=True)
+def test_page_handles_legacy_duplicate_codings(coding_page):
+    at, get_session, ids = coding_page
+    session = get_session()
+    session.add_all([
+        VideoCoding(study_id=ids["study"], video_id=ids["video"], reviewer_id=ids["first"],
+                    transport_modes_json=["Bus"], status="In progress",
+                    coded_at=datetime.datetime(2026, 1, 1)),
+        VideoCoding(study_id=ids["study"], video_id=ids["video"], reviewer_id=ids["second"],
+                    transport_modes_json=["Train"], status="In progress",
+                    coded_at=datetime.datetime(2026, 2, 1)),
+    ])
+    session.commit()
+    session.close()
+
+    at.run()
+    assert not at.exception, [str(e) for e in at.exception]
+    assert next(m for m in at.multiselect if m.label == "Transport mode(s)").value == ["Bus"]
+    _click(at, "Save")
+    session = get_session()
+    assert session.query(VideoCoding).count() == 2
     session.close()
 
 
@@ -625,11 +735,11 @@ def test_page_handles_legacy_coding_records(coding_page):
     assert next(c for c in at.checkbox if c.label == "Mark this video's coding as complete").value
 
 
-@pytest.mark.parametrize("page", ["01_home.py", "10_dashboard.py", "09_reliability.py", "11_export.py"])
+@pytest.mark.parametrize("page", ["01_home.py", "06_screening.py", "10_dashboard.py", "11_export.py"])
 def test_dependent_pages_render_with_revised_and_legacy_coding(coding_page, page):
-    """Home/Dashboard/Reliability/Export read the coding framework; they must
-    work with double-coded revised data alongside legacy presentation and
-    accuracy-assessment rows."""
+    """Home/Screening/Dashboard/Export must work with revised coding data
+    alongside legacy presentation, accuracy-assessment and double-coding rows,
+    and show no reliability or double-coding features."""
     _, get_session, ids = coding_page
     session = get_session()
     study = crud.get_study(session, ids["study"])
@@ -640,6 +750,7 @@ def test_dependent_pages_render_with_revised_and_legacy_coding(coding_page, page
     _save(session, study, video, ids["second"], full_information_coverage(),
           full_older_adult_needs(), mark_complete=True)
     session.add_all([
+        DoubleCodingSample(study_id=ids["study"], video_id=ids["video"], stage="coding"),
         PresentationCode(video_coding_id=first.id, item_name="Captions available", value="Yes"),
         AccuracyClaim(study_id=ids["study"], video_id=ids["video"], reviewer_id=ids["first"],
                       claim_text="Seniors travel free", assessment="Outdated"),
@@ -655,6 +766,12 @@ def test_dependent_pages_render_with_revised_and_legacy_coding(coding_page, page
     assert not at.exception, [str(e) for e in at.exception]
     assert not any("presentation" in t.label.lower() for t in at.tabs)
     assert not any("accuracy" in m.label.lower() for m in at.metric)
+    shown = " ".join(
+        [m.label for m in at.metric] + [c.value for c in at.caption] + [s.value for s in at.subheader]
+        + [e.label for e in at.expander] + [c.label for c in at.checkbox]
+    ).lower()
+    for term in ["kappa", "κ", "agreement", "reliability", "double"]:
+        assert term not in shown, term
     if page == "10_dashboard.py":
         assert next(m for m in at.metric if m.label == "Coded (started)").value == "1"
         assert next(m for m in at.metric if m.label == "Coding complete").value == "1"

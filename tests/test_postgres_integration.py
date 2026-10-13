@@ -96,25 +96,32 @@ def test_foreign_key_and_unique_constraints_enforced_by_postgres(postgres_sessio
     postgres_session.rollback()
 
 
-def test_reviewer_scoped_double_coding_on_postgres(postgres_session):
-    """The core multi-user correctness property from Phase 8: two reviewers'
-    screening decisions on the same video must both survive independently."""
-    study = crud.create_study(postgres_session, name="Double coding test study")
+def test_one_screening_decision_per_video_on_postgres(postgres_session):
+    """No double screening: a second reviewer saving edits the same decision,
+    and the database itself rejects a second decision row for the video."""
+    from sqlalchemy.exc import IntegrityError
+
+    from db.models import ScreeningDecision
+
+    study = crud.create_study(postgres_session, name="One decision per video study")
     r1 = crud.create_reviewer(postgres_session, name="Reviewer One", initials="R1")
     r2 = crud.create_reviewer(postgres_session, name="Reviewer Two", initials="R2")
     video = crud.create_video(postgres_session, study_id=study.id, video_id="v1", title="Video")
     postgres_session.commit()
     postgres_session.refresh(video)
 
-    crud.upsert_screening_decision(
+    first = crud.upsert_screening_decision(
         postgres_session, study_id=study.id, video_pk=video.id, reviewer_id=r1.id,
         decision="Include", exclusion_reason=None, notes=None,
     )
-    crud.upsert_screening_decision(
+    second = crud.upsert_screening_decision(
         postgres_session, study_id=study.id, video_pk=video.id, reviewer_id=r2.id,
         decision="Exclude", exclusion_reason="Other", notes=None,
     )
+    assert second.id == first.id
+    assert (second.decision, second.reviewer_id) == ("Exclude", r2.id)
 
-    all_decisions = crud.list_screening_decisions_for_video(postgres_session, video.id)
-    assert len(all_decisions) == 2
-    assert {d.reviewer_id for d in all_decisions} == {r1.id, r2.id}
+    postgres_session.add(ScreeningDecision(study_id=study.id, video_id=video.id, decision="Unsure"))
+    with pytest.raises(IntegrityError):
+        postgres_session.commit()
+    postgres_session.rollback()

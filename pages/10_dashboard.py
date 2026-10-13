@@ -8,7 +8,7 @@ from components.caching import cached_export_dataframe
 from components.navigation import page_header, render_context_sidebar, require_study
 from db import crud
 from db.database import get_session
-from services import coding_service, export_service, pilot_service, reliability_service, screening_service
+from services import coding_service, export_service, pilot_service, screening_service
 
 # Single consistent hue for plain magnitude bars (dataviz skill: sequential
 # blue, categorical slot 1) -- color isn't encoding a second variable here,
@@ -114,17 +114,9 @@ st.markdown("---")
 st.subheader("Information coverage & older-adult needs")
 
 
-def _canonical_only(df: pd.DataFrame) -> pd.DataFrame:
-    """The item-code exports carry every reviewer's coding; keep only each
-    video's canonical one (the same records char_df holds), so double-coded
-    videos aren't counted twice."""
-    if df.empty or char_df.empty:
-        return df.iloc[0:0]
-    return df.merge(char_df[["video_pk", "reviewer_id"]], on=["video_pk", "reviewer_id"])
-
-
-info_df = _canonical_only(cached_export_dataframe(db, study_id, "information_domains"))
-needs_df = _canonical_only(cached_export_dataframe(db, study_id, "older_adult_needs"))
+# One coding record per video, so these count videos directly.
+info_df = cached_export_dataframe(db, study_id, "information_domains")
+needs_df = cached_export_dataframe(db, study_id, "older_adult_needs")
 present_df = info_df[info_df["value"] == "Present"] if not info_df.empty else info_df
 
 col3, col4 = st.columns(2)
@@ -217,50 +209,5 @@ else:
         f"Duplicate rate: {dup_rate:.0f}% of unique videos in this run were found by more than "
         f"one query ({len(diagnostics.duplicate_video_ids)} of {diagnostics.unique_videos})."
     )
-
-st.markdown("---")
-
-# ---------------------------------------------------------------------------
-# Reliability (double-coding)
-# ---------------------------------------------------------------------------
-
-st.subheader("Reliability")
-
-double_screened = reliability_service.double_coded_videos(db, study_id, unique_videos, "screening")
-double_coded = reliability_service.double_coded_videos(db, study_id, included_videos, "coding")
-
-if not double_screened and not double_coded:
-    st.caption(
-        "No videos have been double-screened or double-coded yet. See the Reliability page "
-        "to select a random sample."
-    )
-else:
-    rc1, rc2 = st.columns(2)
-    if double_screened:
-        screening_stat, _ = reliability_service.screening_reliability(db, study_id, double_screened)
-        rc1.metric(
-            "Screening agreement (κ)",
-            screening_stat.kappa if screening_stat.kappa is not None else "—",
-            help=f"{screening_stat.percentage_agreement}% agreement across {screening_stat.n_pairs} "
-                 "double-screened video(s).",
-        )
-    else:
-        rc1.metric("Screening agreement (κ)", "—")
-
-    if double_coded:
-        char_stats, _ = reliability_service.coding_characteristics_reliability(db, study_id, double_coded)
-        kappas = [s.kappa for s in char_stats if s.kappa is not None]
-        avg_kappa = round(sum(kappas) / len(kappas), 3) if kappas else None
-        rc2.metric(
-            "Coding characteristics agreement (avg κ)",
-            avg_kappa if avg_kappa is not None else "—",
-            help=f"Averaged across {len(kappas)} characteristic field(s) for "
-                 f"{len(double_coded)} double-coded video(s). Full breakdown on the "
-                 "Reliability page.",
-        )
-    else:
-        rc2.metric("Coding characteristics agreement (avg κ)", "—")
-
-    st.caption("See the Reliability page for full field-by-field agreement and disagreements.")
 
 db.close()

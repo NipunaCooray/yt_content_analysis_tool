@@ -250,6 +250,8 @@ class Video(Base):
 
 class ScreeningDecision(Base):
     __tablename__ = "screening_decisions"
+    # One decision per video (no double screening); reviewer_id is who last saved it.
+    __table_args__ = (UniqueConstraint("study_id", "video_id", name="uq_screening_study_video"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     study_id: Mapped[int] = mapped_column(ForeignKey("studies.id", ondelete="CASCADE"), nullable=False)
@@ -271,6 +273,8 @@ class ScreeningDecision(Base):
 
 class VideoCoding(Base):
     __tablename__ = "video_coding"
+    # One coding record per video (no double coding); reviewer_id is who last saved it.
+    __table_args__ = (UniqueConstraint("study_id", "video_id", name="uq_video_coding_study_video"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     study_id: Mapped[int] = mapped_column(ForeignKey("studies.id", ondelete="CASCADE"), nullable=False)
@@ -364,7 +368,8 @@ class AccuracyReviewStatus(Base):
 
 
 # ---------------------------------------------------------------------------
-# Double coding / reliability (Phase 8)
+# Double coding / reliability (Phase 8) -- legacy: the project no longer
+# double-codes, so nothing reads or writes this table; existing rows are kept.
 # ---------------------------------------------------------------------------
 
 

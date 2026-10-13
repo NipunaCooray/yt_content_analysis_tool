@@ -13,7 +13,7 @@ current_study, current_reviewer = render_context_sidebar(db)
 
 page_header(
     "🚌 Transport Information Analysis Tool",
-    "Research data collection, screening, coding, reliability, and export tool for a "
+    "Research data collection, screening, coding, and export tool for a "
     "content analysis of Australian public/alternative transport videos on YouTube.",
 )
 
@@ -72,9 +72,8 @@ st.markdown(
 4. **Full search results** — run the approved strategy at scale, deduplicate into the master video list.
 5. **Screening** — include/exclude/unsure each unique video, with reasons and notes.
 6. **Video coding** — characteristics (including accuracy-related notes), information coverage, older-adult needs.
-7. **Reliability** — random double-screening/coding samples, percentage agreement, Cohen's kappa.
-8. **Dashboard** — study-wide progress and descriptive charts.
-9. **Export** — all datasets as CSV/JSON, individually or as one ZIP.
+7. **Dashboard** — study-wide progress and descriptive charts.
+8. **Export** — all datasets as CSV/JSON, individually or as one ZIP.
     """
 )
 

@@ -5,7 +5,7 @@ public transport and alternative transport services in Australia. See
 [`youtube_transport_research_tool_handover.md`](youtube_transport_research_tool_handover.md)
 for the full product specification.
 
-This is a research data collection, screening, coding, reliability, and export tool — not a general-purpose YouTube analytics dashboard.
+This is a research data collection, screening, coding, and export tool — not a general-purpose YouTube analytics dashboard.
 
 > **Production research data must not be stored in a local SQLite database on Streamlit
 > Community Cloud.** Streamlit Cloud's local disk is not persistent — it can be wiped on
@@ -16,8 +16,9 @@ This is a research data collection, screening, coding, reliability, and export t
 ## Status
 
 **All 7 phases from the handover doc implemented** (see section 35 for the phase breakdown),
-**plus reviewer-scoped double screening/coding, inter-rater reliability, and a
-PostgreSQL-backed production deployment path**:
+**plus a PostgreSQL-backed production deployment path**. Double screening/coding and
+inter-rater reliability were built and later removed after researcher user testing: each
+video now has one screening decision and one coding record, shared by whoever works on it.
 
 - Study / reviewer / search-query CRUD
 - Pilot search: relevance rating, per-query performance stats, diagnostics, run history, and
@@ -33,12 +34,8 @@ PostgreSQL-backed production deployment path**:
   coding, gated to included videos. The framework was revised after researcher user testing:
   presentation coding and the claim-level accuracy assessment page were removed, and their
   historical rows are kept in the database and exported as archived legacy datasets
-- **Reliability**: each reviewer's screening/coding is kept as an independent record (never
-  overwritten by a second reviewer), a random double-coding sample selector, blind-until-
-  completion comparison, percentage agreement, and Cohen's kappa
-- Dashboard: study-wide counters and descriptive charts, including a reliability summary
-- Export: the 12 core CSV/JSON datasets plus 3 reliability datasets (every reviewer's raw
-  records, and a computed agreement/kappa summary) and 4 archived legacy-coding datasets,
+- Dashboard: study-wide counters and descriptive charts
+- Export: the 12 core CSV/JSON datasets plus 4 archived legacy-coding datasets,
   individually or as one ZIP
 - **PostgreSQL in production, SQLite for local dev/tests**: pilot/full search runs are durable
   (a row exists as soon as a run starts, results save incrementally per query, and the run's
@@ -198,14 +195,14 @@ Before starting the real study, verify the deployed app end-to-end:
 - **Export** — export test data, verify IDs and values look right
 - **Database diagnostics** — check the Settings page shows "Connected (postgresql)"
 
-Then a **multi-user smoke test**, which must pass before formal double coding begins:
+Then a **multi-user smoke test**:
 
 1. Open two independent browser sessions (or two people, two machines)
 2. Select different reviewer profiles in each
 3. Open the same study in both
 4. Code different videos simultaneously — confirm neither overwrites the other
-5. Double-code one video under both reviewers — confirm both coding records remain available
-   independently (check the Reliability page)
+5. Open the same video in both — confirm each sees the one shared coding record, and that
+   the last save is the one kept
 
 Delete any test studies/reviewers/data created during these checks before real data collection
 begins.
@@ -238,7 +235,7 @@ alembic/                # PostgreSQL schema migrations (source of truth for prod
 alembic.ini
 pages/                  # one file per sidebar page
 db/                     # SQLAlchemy models, session/engine management (SQLite + PostgreSQL), CRUD
-services/               # business logic (YouTube API client, pilot/full search, reliability, ...)
+services/               # business logic (YouTube API client, pilot/full search, coding, exports, ...)
 components/             # shared Streamlit UI pieces (sidebar, video embed, forms)
 utils/                  # constants (coding domains/vocabularies), validators, helpers
 scripts/                # one-off ops scripts (SQLite -> PostgreSQL data migration)

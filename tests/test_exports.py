@@ -107,9 +107,12 @@ def test_all_datasets_registered():
     keys = {d.key for d in export_service.EXPORT_DATASETS}
     assert "presentation_coding" not in keys
     assert "accuracy_claims" not in keys
-    # Plus 3 reliability datasets (Phase 8) and 4 legacy archives.
-    assert len(export_service.EXPORT_DATASETS) == 19
-    assert len(keys) == 19  # no duplicate keys
+    # No reliability/dual-coding datasets (double coding was removed).
+    for removed in ["screening_all_reviewers", "video_coding_all_reviewers", "reliability_summary"]:
+        assert removed not in keys
+    # Plus 4 legacy archives.
+    assert len(export_service.EXPORT_DATASETS) == 16
+    assert len(keys) == 16  # no duplicate keys
 
 
 def test_all_datasets_populated_for_a_fully_worked_study(db_session, fully_populated_study):
@@ -149,9 +152,9 @@ def test_unique_videos_df_includes_derived_statuses(db_session, fully_populated_
 def test_information_domains_df_is_long_format_with_framework_columns(db_session, fully_populated_study):
     study = fully_populated_study
     df = export_service.information_domains_df(db_session, study.id)
-    for column in ["study_id", "video_id", "reviewer_id", "category", "item_key", "item_label",
-                   "value", "notes"]:
+    for column in ["study_id", "video_id", "category", "item_key", "item_label", "value", "notes"]:
         assert column in df.columns
+    assert "reviewer_id" not in df.columns and "reviewer_name" not in df.columns
     row = df[df["item_key"] == "payment_how_to_pay"].iloc[0]
     assert row["category"] == "Payment"
     assert row["item_label"] == "How to pay"
@@ -166,8 +169,9 @@ def test_information_domains_df_is_long_format_with_framework_columns(db_session
 def test_older_adult_needs_df_exports_mentioned_and_item_notes(db_session, fully_populated_study):
     study = fully_populated_study
     df = export_service.older_adult_needs_df(db_session, study.id)
-    for column in ["study_id", "video_id", "reviewer_id", "need_key", "need_label", "mentioned", "notes"]:
+    for column in ["study_id", "video_id", "need_key", "need_label", "mentioned", "notes"]:
         assert column in df.columns
+    assert "reviewer_id" not in df.columns and "reviewer_name" not in df.columns
     assert df["need_label"].tolist() == [
         "Journey Planning", "Payment", "Accessibility and safety", "Assistance seeking",
     ]
@@ -177,37 +181,35 @@ def test_older_adult_needs_df_exports_mentioned_and_item_notes(db_session, fully
     assert df[df["need_key"] == "older_payment"].iloc[0]["mentioned"] == "No"
 
 
-def test_coding_exports_keep_each_reviewers_rows(db_session, fully_populated_study):
+def test_a_second_reviewer_edits_the_same_coding_record(db_session, fully_populated_study):
+    """One coding record per video: a second reviewer saving replaces the
+    values rather than adding a parallel record."""
     study = fully_populated_study
     video = crud.list_videos(db_session, study.id)[0]
     second = crud.create_reviewer(db_session, name="Second Reviewer", initials="SR")
     coding_service.save_video_coding(
         db_session, study_id=study.id, video_pk=video.id, reviewer_id=second.id,
-        transport_modes=[], jurisdictions=[], uploader_type=None, intended_audience=None,
-        older_adult_targeted=None, notes=None, accuracy_notes=None,
+        transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type="Media",
+        intended_audience="General public", older_adult_targeted="No", notes=None,
+        accuracy_notes="Revised accuracy note",
         information_domain_values=full_information_coverage(payment_how_to_pay=("Absent", None)),
         older_adult_need_values=full_older_adult_needs(older_payment=("Yes", "Tap on, tap off")),
         mark_complete=True,
     )
 
     info = export_service.information_domains_df(db_session, study.id)
-    assert len(info) == 60
-    pay = info[info["item_key"] == "payment_how_to_pay"].set_index("reviewer_name")["value"]
-    assert pay.to_dict() == {"Jane Doe": "Present", "Second Reviewer": "Absent"}
-    assert info["video_id"].notna().all()  # second reviewer's rows keep their video context
+    assert len(info) == 30  # still one video's worth, not 60
+    assert info[info["item_key"] == "payment_how_to_pay"].iloc[0]["value"] == "Absent"
 
     needs = export_service.older_adult_needs_df(db_session, study.id)
-    pay_need = needs[needs["need_key"] == "older_payment"].set_index("reviewer_name")
-    assert pay_need["mentioned"].to_dict() == {"Jane Doe": "No", "Second Reviewer": "Yes"}
-    assert pay_need.loc["Second Reviewer", "notes"] == "Tap on, tap off"
+    assert len(needs) == 4
+    pay_need = needs[needs["need_key"] == "older_payment"].iloc[0]
+    assert (pay_need["mentioned"], pay_need["notes"]) == ("Yes", "Tap on, tap off")
 
-    # accuracy_notes is reviewer-specific: each reviewer's own (or none).
-    all_coding = export_service.video_coding_all_reviewers_df(db_session, study.id)
-    by_reviewer = all_coding.set_index("reviewer_name")["accuracy_notes"]
-    assert by_reviewer["Jane Doe"] == "Says seniors travel free after 9 am; may be outdated."
-    assert by_reviewer.isna()["Second Reviewer"]
-    canonical = export_service.video_characteristics_df(db_session, study.id)
-    assert canonical.iloc[0]["accuracy_notes"] == "Says seniors travel free after 9 am; may be outdated."
+    characteristics = export_service.video_characteristics_df(db_session, study.id)
+    assert len(characteristics) == 1
+    assert characteristics.iloc[0]["accuracy_notes"] == "Revised accuracy note"
+    assert characteristics.iloc[0]["reviewer_id"] == second.id  # last saved by
 
 
 def test_legacy_coding_is_archived_separately_not_mixed_in(db_session, fully_populated_study):
@@ -266,13 +268,13 @@ def test_build_zip_export_contains_every_dataset_csv(db_session, fully_populated
     zip_bytes = export_service.build_zip_export(db_session, study.id)
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         names = zf.namelist()
-        assert len(names) == 19
+        assert len(names) == 16
         assert "study_001_presentation_coding.csv" not in names
         assert "study_001_legacy_presentation_coding.csv" in names
         assert "study_001_search_queries.csv" in names
         assert "study_001_accuracy_claims.csv" not in names
         assert "study_001_legacy_accuracy_claims.csv" in names
-        assert "study_001_reliability_summary.csv" in names
+        assert "study_001_reliability_summary.csv" not in names
         # Spot-check one file actually has real content.
         content = zf.read("study_001_screening.csv").decode("utf-8")
         assert "Include" in content

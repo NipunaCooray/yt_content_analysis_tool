@@ -50,3 +50,41 @@ def db_session():
     finally:
         session.close()
         engine.dispose()
+
+
+ONE_PER_VIDEO_CONSTRAINTS = {"uq_screening_study_video", "uq_video_coding_study_video"}
+
+
+def create_pre_single_record_schema(engine) -> None:
+    """The schema as it was before one-record-per-video was enforced, so
+    tests can hold the legacy per-reviewer duplicate rows an older database
+    may still contain (the current models forbid creating them)."""
+    from sqlalchemy import MetaData
+
+    legacy = MetaData()
+    for table in Base.metadata.sorted_tables:
+        copy = table.to_metadata(legacy)
+        for constraint in list(copy.constraints):
+            if constraint.name in ONE_PER_VIDEO_CONSTRAINTS:
+                copy.constraints.discard(constraint)
+    legacy.create_all(engine)
+
+
+@pytest.fixture()
+def legacy_db_session():
+    """Like db_session, but on the pre-single-record schema."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    create_pre_single_record_schema(engine)
+    session = sessionmaker(bind=engine, expire_on_commit=False)()
+    try:
+        yield session
+    finally:
+        session.close()
+        engine.dispose()
