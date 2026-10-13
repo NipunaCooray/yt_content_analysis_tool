@@ -179,6 +179,15 @@ AUDIENCE_TYPES = [
 
 YES_NO_UNCLEAR = ["Yes", "No", "Unclear"]
 
+# Optional free-text field at the end of the Characteristics tab. Replaces
+# the claim-level accuracy assessment (removed after researcher user
+# testing); stored in video_coding.accuracy_notes.
+ACCURACY_NOTES_LABEL = "Accuracy-related information or concerns"
+ACCURACY_NOTES_HELP = (
+    "Optional: Record any information in the video that appears inaccurate, outdated, "
+    "misleading, unclear, or otherwise relevant to accuracy."
+)
+
 # ---------------------------------------------------------------------------
 # Information coverage coding (revised after researcher user testing)
 # ---------------------------------------------------------------------------
@@ -199,6 +208,7 @@ class CodingItem:
     key: str
     label: str
     category: str | None = None
+    help: str | None = None  # optional coder guidance, shown as a tooltip
 
 
 INFORMATION_COVERAGE_CATEGORIES = [
@@ -231,9 +241,9 @@ INFORMATION_COVERAGE_ITEMS = [
     CodingItem("stop_exit_correct", "How to exit correct stop / station / platform / wharf", _STOP),
     CodingItem("riding_accessibility_features", "Accessibility features", _RIDING),
     CodingItem(
-        "riding_specific_rules",
-        "Any specific rules, e.g. requesting service, priority seating, boarding requirements",
-        _RIDING,
+        "riding_specific_rules", "Any specific rules", _RIDING,
+        help="For example: requesting the service, priority seating, boarding requirements, "
+        "service-specific rules.",
     ),
     CodingItem("riding_etiquette", "Etiquette when taking service", _RIDING),
     CodingItem("trip_announcements", "Announcements — visual and/or audio", _TRIP),
@@ -276,34 +286,6 @@ OLDER_ADULT_NEED_VALUES = ["Yes", "No"]
 # Presentation / communication coding was removed after researcher user
 # testing. Existing presentation_codes rows are preserved (and exported as
 # legacy data) but no new ones are collected.
-
-# ---------------------------------------------------------------------------
-# Accuracy assessment (handover doc section 18)
-# ---------------------------------------------------------------------------
-
-CLAIM_CATEGORIES = [
-    "Journey planning",
-    "Routes",
-    "Timetables",
-    "Payment",
-    "Fares",
-    "Concessions",
-    "Booking",
-    "Eligibility",
-    "Accessibility",
-    "Assistance",
-    "Transfers",
-    "Disruptions",
-    "Other",
-]
-
-ACCURACY_VALUES = [
-    "Correct",
-    "Correct but incomplete",
-    "Outdated",
-    "Incorrect",
-    "Unverifiable",
-]
 
 # ---------------------------------------------------------------------------
 # Coding / review status

@@ -145,7 +145,7 @@ def raw_search_results_df(db: Session, study_id: int) -> pd.DataFrame:
 
 
 def unique_videos_df(db: Session, study_id: int) -> pd.DataFrame:
-    from services import accuracy_service, coding_service, screening_service
+    from services import coding_service, screening_service
     from services.deduplication import best_rank_per_video, queries_per_video
 
     videos = crud.list_videos(db, study_id)
@@ -154,8 +154,6 @@ def unique_videos_df(db: Session, study_id: int) -> pd.DataFrame:
     best_rank = best_rank_per_video(raw_results)
     decisions = crud.list_screening_decisions(db, study_id)
     codings = crud.list_video_codings(db, study_id)
-    review_statuses = crud.list_accuracy_review_statuses(db, study_id)
-    claim_counts = crud.count_accuracy_claims(db, study_id)
 
     return pd.DataFrame([{
         "id": v.id,
@@ -173,9 +171,6 @@ def unique_videos_df(db: Session, study_id: int) -> pd.DataFrame:
         "best_search_rank": best_rank.get(v.video_id),
         "screening_status": screening_service.screening_status(decisions.get(v.id)),
         "coding_status": coding_service.coding_status(codings.get(v.id)),
-        "accuracy_status": accuracy_service.accuracy_status(
-            review_statuses.get(v.id), claim_counts.get(v.id, 0)
-        ),
     } for v in videos])
 
 
@@ -212,6 +207,7 @@ def video_characteristics_df(db: Session, study_id: int) -> pd.DataFrame:
         "intended_audience": c.intended_audience,
         "older_adult_targeted": c.older_adult_targeted,
         "notes": c.notes,
+        "accuracy_notes": c.accuracy_notes,
         "status": c.status,
         "reviewer_id": c.reviewer_id,
         "coded_at": c.coded_at,
@@ -310,7 +306,9 @@ def legacy_presentation_coding_df(db: Session, study_id: int) -> pd.DataFrame:
     return _legacy_codes_df(db, study_id, rows, "item_name")
 
 
-def accuracy_claims_df(db: Session, study_id: int) -> pd.DataFrame:
+def legacy_accuracy_claims_df(db: Session, study_id: int) -> pd.DataFrame:
+    """Claim-level accuracy assessment, archived as-is (no longer collected;
+    never mapped into video_coding.accuracy_notes)."""
     videos = {v.id: v for v in crud.list_videos(db, study_id)}
     rows = crud.list_accuracy_claims_for_study(db, study_id)
     return pd.DataFrame([{
@@ -386,6 +384,7 @@ def video_coding_all_reviewers_df(db: Session, study_id: int) -> pd.DataFrame:
         "intended_audience": c.intended_audience,
         "older_adult_targeted": c.older_adult_targeted,
         "notes": c.notes,
+        "accuracy_notes": c.accuracy_notes,
         "status": c.status,
         "coded_at": c.coded_at,
         "updated_at": c.updated_at,
@@ -428,8 +427,9 @@ class ExportDataset:
     label: str
     filename_suffix: str
     builder: Callable[[Session, int], pd.DataFrame]
-    # The datasets from handover doc section 22 (presentation coding has since
-    # been removed from the framework -- its legacy rows are archived below).
+    # The datasets from handover doc section 22 (presentation coding and
+    # accuracy claims have since been removed -- their legacy rows are
+    # archived below).
     required: bool = True
 
 
@@ -445,7 +445,6 @@ EXPORT_DATASETS: list[ExportDataset] = [
     ExportDataset("video_characteristics", "Video characteristics (canonical)", "video_coding", video_characteristics_df),
     ExportDataset("information_domains", "Information coverage coding", "information_domains", information_domains_df),
     ExportDataset("older_adult_needs", "Older-adult-needs coding", "older_adult_needs", older_adult_needs_df),
-    ExportDataset("accuracy_claims", "Accuracy claims", "accuracy_claims", accuracy_claims_df),
     ExportDataset("reviewers", "Reviewers", "reviewers", reviewers_df),
     ExportDataset(
         "screening_all_reviewers", "Screening decisions (all reviewers)", "screening_all_reviewers",
@@ -470,6 +469,10 @@ EXPORT_DATASETS: list[ExportDataset] = [
     ExportDataset(
         "legacy_presentation_coding", "Legacy presentation coding (archived)",
         "legacy_presentation_coding", legacy_presentation_coding_df, required=False,
+    ),
+    ExportDataset(
+        "legacy_accuracy_claims", "Legacy accuracy claims (archived)",
+        "legacy_accuracy_claims", legacy_accuracy_claims_df, required=False,
     ),
 ]
 

@@ -102,13 +102,13 @@ def test_second_reviewer_coding_does_not_overwrite_first(db_session, study_with_
     coding_service.save_video_coding(
         db_session, study_id=study.id, video_pk=v.id, reviewer_id=r1.id,
         transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type="Media",
-        intended_audience="General public", older_adult_targeted="No", notes=None,
+        intended_audience="General public", older_adult_targeted="No", notes=None, accuracy_notes=None,
         information_domain_values=empty, older_adult_need_values=empty, mark_complete=True,
     )
     coding_service.save_video_coding(
         db_session, study_id=study.id, video_pk=v.id, reviewer_id=r2.id,
         transport_modes=["Train"], jurisdictions=["VIC"], uploader_type="Government / transport authority",
-        intended_audience="Older adults", older_adult_targeted="Yes", notes=None,
+        intended_audience="Older adults", older_adult_targeted="Yes", notes=None, accuracy_notes=None,
         information_domain_values=empty, older_adult_need_values=empty, mark_complete=True,
     )
 
@@ -266,13 +266,13 @@ def test_coding_characteristics_reliability_end_to_end(db_session, study_with_tw
     coding_service.save_video_coding(
         db_session, study_id=study.id, video_pk=v.id, reviewer_id=r1.id,
         transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type="Media",
-        intended_audience="General public", older_adult_targeted="No", notes=None,
+        intended_audience="General public", older_adult_targeted="No", notes=None, accuracy_notes=None,
         information_domain_values=empty, older_adult_need_values=empty, mark_complete=True,
     )
     coding_service.save_video_coding(
         db_session, study_id=study.id, video_pk=v.id, reviewer_id=r2.id,
         transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type="Media",
-        intended_audience="Older adults", older_adult_targeted="Yes", notes=None,
+        intended_audience="Older adults", older_adult_targeted="Yes", notes=None, accuracy_notes=None,
         information_domain_values=empty, older_adult_need_values=empty, mark_complete=True,
     )
 
@@ -301,14 +301,14 @@ def test_domain_code_reliability_end_to_end(db_session, study_with_two_reviewers
     coding_service.save_video_coding(
         db_session, study_id=study.id, video_pk=v.id, reviewer_id=r1.id,
         transport_modes=[], jurisdictions=[], uploader_type=None, intended_audience=None,
-        older_adult_targeted=None, notes=None,
+        older_adult_targeted=None, notes=None, accuracy_notes=None,
         information_domain_values={"payment_how_to_pay": ("Present", None)},
         older_adult_need_values={"older_payment": ("Yes", "Opal card")}, mark_complete=True,
     )
     coding_service.save_video_coding(
         db_session, study_id=study.id, video_pk=v.id, reviewer_id=r2.id,
         transport_modes=[], jurisdictions=[], uploader_type=None, intended_audience=None,
-        older_adult_targeted=None, notes=None,
+        older_adult_targeted=None, notes=None, accuracy_notes=None,
         information_domain_values={"payment_how_to_pay": ("Absent", None)},
         older_adult_need_values={"older_payment": ("Yes", None)}, mark_complete=True,
     )

@@ -1,6 +1,7 @@
-"""Phase 5: video coding -- characteristics, plus the two domain-coding
-sections (information coverage, older-adult needs) as revised after
-researcher user testing. Presentation coding was removed: legacy rows are
+"""Phase 5: video coding -- characteristics (plus the optional free-text
+accuracy notes), and the two domain-coding sections (information coverage,
+older-adult needs) as revised after researcher user testing. Presentation
+coding and the claim-level accuracy assessment were removed: legacy rows are
 preserved, but no new ones are collected and completion doesn't need them."""
 
 from __future__ import annotations
@@ -11,10 +12,18 @@ from pathlib import Path
 import pytest
 
 from db import crud
-from db.models import InformationDomainCode, OlderAdultNeedCode, PresentationCode
+from db.models import (
+    AccuracyClaim,
+    AccuracyReviewStatus,
+    InformationDomainCode,
+    OlderAdultNeedCode,
+    PresentationCode,
+)
 from services import coding_service
 from tests.coding_helpers import full_information_coverage, full_older_adult_needs
 from utils.constants import (
+    ACCURACY_NOTES_HELP,
+    ACCURACY_NOTES_LABEL,
     INFORMATION_COVERAGE_CATEGORIES,
     INFORMATION_COVERAGE_ITEMS,
     OLDER_ADULT_NEED_ITEMS,
@@ -47,7 +56,7 @@ REQUESTED_FRAMEWORK = {
     ],
     "Riding the Service": [
         "Accessibility features",
-        "Any specific rules, e.g. requesting service, priority seating, boarding requirements",
+        "Any specific rules",
         "Etiquette when taking service",
     ],
     "During the Trip": [
@@ -103,7 +112,7 @@ def study_with_included_video(db_session):
 def _save(db_session, study, video, reviewer_id, info, needs, mark_complete=False, **characteristics):
     fields = dict(
         transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type=None,
-        intended_audience=None, older_adult_targeted=None, notes=None,
+        intended_audience=None, older_adult_targeted=None, notes=None, accuracy_notes=None,
     )
     fields.update(characteristics)
     return coding_service.save_video_coding(
@@ -128,6 +137,14 @@ def test_information_coverage_has_every_requested_item_under_its_category():
         for category in INFORMATION_COVERAGE_CATEGORIES
     }
     assert actual == REQUESTED_FRAMEWORK
+
+
+def test_any_specific_rules_carries_its_examples_as_helper_text_only():
+    item = next(i for i in INFORMATION_COVERAGE_ITEMS if i.key == "riding_specific_rules")
+    assert item.label == "Any specific rules"
+    for example in ["requesting the service", "priority seating", "boarding requirements",
+                    "service-specific rules"]:
+        assert example in item.help
 
 
 def test_item_keys_are_unique_and_stable_identifiers():
@@ -275,6 +292,30 @@ def test_invalid_values_are_rejected(db_session, study_with_included_video):
         _save(db_session, study, included, reviewer.id, {}, {"older_payment": ("Unclear", None)})
 
 
+def test_accuracy_notes_save_edit_and_clear(db_session, study_with_included_video):
+    study, reviewer, included, _ = study_with_included_video
+    note = "The video states that seniors travel free after 9 am, but this may be outdated."
+    coding = _save(db_session, study, included, reviewer.id, {}, {}, accuracy_notes=note)
+    assert crud.get_video_coding(db_session, included.id, reviewer.id).accuracy_notes == note
+
+    _save(db_session, study, included, reviewer.id, {}, {}, accuracy_notes="Revised concern")
+    assert crud.get_video_coding(db_session, included.id, reviewer.id).accuracy_notes == "Revised concern"
+
+    _save(db_session, study, included, reviewer.id, {}, {}, accuracy_notes=None)
+    reloaded = crud.get_video_coding(db_session, included.id, reviewer.id)
+    assert reloaded.id == coding.id
+    assert reloaded.accuracy_notes is None
+
+
+def test_accuracy_notes_are_reviewer_specific(db_session, study_with_included_video):
+    study, reviewer, included, _ = study_with_included_video
+    other = crud.create_reviewer(db_session, name="Second", initials="SE")
+    _save(db_session, study, included, reviewer.id, {}, {}, accuracy_notes="A's concern")
+    _save(db_session, study, included, other.id, {}, {}, accuracy_notes=None)
+    assert crud.get_video_coding(db_session, included.id, reviewer.id).accuracy_notes == "A's concern"
+    assert crud.get_video_coding(db_session, included.id, other.id).accuracy_notes is None
+
+
 # ---------------------------------------------------------------------------
 # Completion
 # ---------------------------------------------------------------------------
@@ -285,6 +326,15 @@ def test_fully_coded_video_can_be_marked_complete_without_presentation(db_sessio
     coding = _save(db_session, study, included, reviewer.id, full_information_coverage(),
                    full_older_adult_needs(), mark_complete=True)
     assert coding.status == coding_service.STATUS_COMPLETE
+
+
+def test_completion_needs_no_accuracy_notes_or_accuracy_assessment(db_session, study_with_included_video):
+    study, reviewer, included, _ = study_with_included_video
+    coding = _save(db_session, study, included, reviewer.id, full_information_coverage(),
+                   full_older_adult_needs(), mark_complete=True, accuracy_notes=None)
+    assert coding.status == coding_service.STATUS_COMPLETE
+    assert db_session.query(AccuracyClaim).count() == 0
+    assert db_session.query(AccuracyReviewStatus).count() == 0
 
 
 def test_mark_complete_needs_every_older_adult_need_answered(db_session, study_with_included_video):
@@ -432,6 +482,24 @@ def test_page_shows_three_tabs_and_no_presentation(coding_page):
     assert not any("presentation" in t.label.lower() for t in at.tabs)
 
 
+def test_characteristics_tab_keeps_its_fields_and_adds_accuracy_notes_last(coding_page):
+    at, _, _ = coding_page
+    at.run()
+    char_tab = at.tabs[0]
+    assert [m.label for m in char_tab.multiselect] == ["Transport mode(s)", "Jurisdiction(s)"]
+    assert [s.label for s in char_tab.selectbox] == ["Uploader type", "Audience"]
+    assert [r.label for r in char_tab.radio] == ["Specifically aimed at older adults?"]
+    assert [t.label for t in char_tab.text_area] == ["Notes", ACCURACY_NOTES_LABEL]
+    assert char_tab.text_area[1].value == ""  # optional, starts empty
+    assert any(c.value == ACCURACY_NOTES_HELP for c in char_tab.caption)
+
+
+def test_accuracy_assessment_page_is_gone_from_navigation():
+    root = Path(PAGE).parent.parent
+    assert "accuracy" not in (root / "app.py").read_text().lower()
+    assert not list((root / "pages").glob("*accuracy*"))
+
+
 def test_page_renders_all_categories_and_items(coding_page):
     at, _, _ = coding_page
     at.run()
@@ -464,6 +532,7 @@ def test_page_saves_and_reloads_coding(coding_page):
     at, get_session, ids = coding_page
     at.run()
     _control(at, "How to pay").set_value("Present")
+    next(t for t in at.text_area if t.label == ACCURACY_NOTES_LABEL).input("Fare may be outdated.")
     _control(at, "Payment").set_value("Yes").run()
     next(t for t in at.text_area if t.label == "If Yes, what did they mention?").input("Opal fares")
     _click(at, "Save")
@@ -471,6 +540,7 @@ def test_page_saves_and_reloads_coding(coding_page):
     session = get_session()
     coding = crud.get_video_coding(session, ids["video"], ids["first"])
     assert coding.status == coding_service.STATUS_IN_PROGRESS
+    assert coding.accuracy_notes == "Fare may be outdated."
     assert crud.list_information_domain_codes(session, coding.id)["payment_how_to_pay"].value == "Present"
     need = crud.list_older_adult_need_codes(session, coding.id)["older_payment"]
     assert (need.value, need.notes) == ("Yes", "Opal fares")
@@ -484,6 +554,7 @@ def test_page_saves_and_reloads_coding(coding_page):
     assert _control(fresh, "How to pay").value == "Present"
     assert _control(fresh, "Payment").value == "Yes"
     assert any(t.value == "Opal fares" for t in fresh.text_area)
+    assert next(t for t in fresh.text_area if t.label == ACCURACY_NOTES_LABEL).value == "Fare may be outdated."
 
 
 def test_page_mark_complete_requires_full_coding(coding_page):
@@ -536,7 +607,8 @@ def test_page_handles_legacy_coding_records(coding_page):
     coding = crud.upsert_video_coding(
         session, study_id=ids["study"], video_pk=ids["video"], reviewer_id=ids["first"],
         transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type=None, intended_audience=None,
-        older_adult_targeted=None, notes=None, status=coding_service.STATUS_COMPLETE,
+        older_adult_targeted=None, notes=None, accuracy_notes=None,
+            status=coding_service.STATUS_COMPLETE,
     )
     session.add_all([
         InformationDomainCode(video_coding_id=coding.id, domain_name="Fares/payment", value="Present"),
@@ -553,10 +625,11 @@ def test_page_handles_legacy_coding_records(coding_page):
     assert next(c for c in at.checkbox if c.label == "Mark this video's coding as complete").value
 
 
-@pytest.mark.parametrize("page", ["10_dashboard.py", "09_reliability.py", "11_export.py"])
+@pytest.mark.parametrize("page", ["01_home.py", "10_dashboard.py", "09_reliability.py", "11_export.py"])
 def test_dependent_pages_render_with_revised_and_legacy_coding(coding_page, page):
-    """Dashboard/Reliability/Export read the coding framework; they must work
-    with double-coded revised data alongside legacy rows."""
+    """Home/Dashboard/Reliability/Export read the coding framework; they must
+    work with double-coded revised data alongside legacy presentation and
+    accuracy-assessment rows."""
     _, get_session, ids = coding_page
     session = get_session()
     study = crud.get_study(session, ids["study"])
@@ -566,7 +639,13 @@ def test_dependent_pages_render_with_revised_and_legacy_coding(coding_page, page
                   full_older_adult_needs(older_payment=("Yes", "Fares")), mark_complete=True)
     _save(session, study, video, ids["second"], full_information_coverage(),
           full_older_adult_needs(), mark_complete=True)
-    session.add(PresentationCode(video_coding_id=first.id, item_name="Captions available", value="Yes"))
+    session.add_all([
+        PresentationCode(video_coding_id=first.id, item_name="Captions available", value="Yes"),
+        AccuracyClaim(study_id=ids["study"], video_id=ids["video"], reviewer_id=ids["first"],
+                      claim_text="Seniors travel free", assessment="Outdated"),
+        AccuracyReviewStatus(study_id=ids["study"], video_id=ids["video"], reviewer_id=ids["first"],
+                             is_complete=True),
+    ])
     session.commit()
     session.close()
 
@@ -575,5 +654,9 @@ def test_dependent_pages_render_with_revised_and_legacy_coding(coding_page, page
     at = AppTest.from_file(str(Path(PAGE).parent / page), default_timeout=60).run()
     assert not at.exception, [str(e) for e in at.exception]
     assert not any("presentation" in t.label.lower() for t in at.tabs)
+    assert not any("accuracy" in m.label.lower() for m in at.metric)
     if page == "10_dashboard.py":
         assert next(m for m in at.metric if m.label == "Coded (started)").value == "1"
+        assert next(m for m in at.metric if m.label == "Coding complete").value == "1"
+    if page == "01_home.py":
+        assert next(m for m in at.metric if m.label == "Coding complete").value == "1"

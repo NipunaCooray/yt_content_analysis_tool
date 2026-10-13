@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from db import crud
+from db.models import AccuracyClaim, AccuracyReviewStatus
 from services import coding_service
 
 
@@ -34,18 +35,20 @@ def fully_populated_study(db_session):
         db_session, study_id=study.id, video_pk=video.id, reviewer_id=reviewer.id,
         transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type="Media",
         intended_audience="General public", older_adult_targeted="No", notes=None,
+        accuracy_notes="Fare stated may be outdated.",
         information_domain_values={"payment_how_to_pay": ("Present", None)},
         older_adult_need_values={"older_payment": ("Yes", None)},
         mark_complete=True,
     )
-    crud.create_accuracy_claim(
-        db_session, study_id=study.id, video_pk=video.id, reviewer_id=reviewer.id,
-        claim_text="test claim", category="Payment", official_source_url=None,
-        assessment="Correct", notes=None,
-    )
-    crud.set_accuracy_review_complete(
-        db_session, study_id=study.id, video_pk=video.id, reviewer_id=reviewer.id, is_complete=True,
-    )
+    # Legacy accuracy-assessment rows (no longer collected, but the tables
+    # remain and must still cascade / keep data like any other).
+    db_session.add_all([
+        AccuracyClaim(study_id=study.id, video_id=video.id, reviewer_id=reviewer.id,
+                      claim_text="test claim", category="Payment", assessment="Correct"),
+        AccuracyReviewStatus(study_id=study.id, video_id=video.id, reviewer_id=reviewer.id,
+                             is_complete=True),
+    ])
+    db_session.commit()
     crud.select_random_double_coding_sample(db_session, study.id, "screening", [video.id], 100)
     run = crud.create_pilot_search_run(db_session, study_id=study.id, reviewer_id=reviewer.id)
     crud.add_pilot_search_result(
@@ -66,8 +69,8 @@ def test_deleting_a_study_cascades_through_every_dependent_table(db_session, ful
     assert crud.list_videos(db_session, study.id) == []
     assert crud.list_screening_decisions(db_session, study.id) == {}
     assert crud.list_video_codings(db_session, study.id) == {}
-    assert crud.list_accuracy_claims(db_session, study.id, video.id) == []
-    assert crud.get_accuracy_review_status(db_session, video.id) is None
+    assert db_session.query(AccuracyClaim).count() == 0
+    assert db_session.query(AccuracyReviewStatus).count() == 0
     assert crud.list_double_coding_sample_video_ids(db_session, study.id, "screening") == set()
     assert crud.list_pilot_search_runs(db_session, study.id) == []
     assert crud.list_audit_log(db_session, study_id=study.id) == []
@@ -115,9 +118,10 @@ def test_deleting_a_reviewer_preserves_data_and_only_clears_attribution(db_sessi
 
     codings = crud.list_video_codings(db_session, study.id)
     assert codings[video.id].transport_modes_json == ["Bus"]
+    assert codings[video.id].accuracy_notes == "Fare stated may be outdated."
     assert codings[video.id].reviewer_id is None
 
-    claims = crud.list_accuracy_claims(db_session, study.id, video.id)
+    claims = crud.list_accuracy_claims_for_study(db_session, study.id)
     assert len(claims) == 1
     assert claims[0].claim_text == "test claim"
     assert claims[0].reviewer_id is None

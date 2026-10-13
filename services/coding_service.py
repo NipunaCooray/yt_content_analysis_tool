@@ -97,6 +97,7 @@ def save_video_coding(
     intended_audience: str | None,
     older_adult_targeted: str | None,
     notes: str | None,
+    accuracy_notes: str | None,
     information_domain_values: dict[str, tuple[str | None, str | None]],
     older_adult_need_values: dict[str, tuple[str | None, str | None]],
     mark_complete: bool,
@@ -108,6 +109,7 @@ def save_video_coding(
     mark_complete is only honoured once every current-framework item is
     coded (see missing_for_completion); otherwise the work is still saved,
     as in progress. Check the returned record's status to tell which.
+    accuracy_notes is optional free text and never affects completion.
     """
     _validate(information_domain_values, _COVERAGE_KEYS, INFORMATION_COVERAGE_VALUES,
               "information coverage")
@@ -130,6 +132,7 @@ def save_video_coding(
         intended_audience=intended_audience,
         older_adult_targeted=older_adult_targeted,
         notes=notes,
+        accuracy_notes=accuracy_notes,
         status=status,
     )
 

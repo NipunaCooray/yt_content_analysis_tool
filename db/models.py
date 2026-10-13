@@ -282,6 +282,10 @@ class VideoCoding(Base):
     intended_audience: Mapped[str | None] = mapped_column(String(100))
     older_adult_targeted: Mapped[str | None] = mapped_column(String(20))
     notes: Mapped[str | None] = mapped_column(Text)
+    # Free-text accuracy observations (added after researcher user testing;
+    # replaces the claim-level accuracy assessment for new coding -- the
+    # accuracy_claims/accuracy_review_status tables below are now legacy).
+    accuracy_notes: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="Not started")
     coded_at: Mapped[datetime.datetime | None] = mapped_column(DateTime)
     updated_at: Mapped[datetime.datetime] = mapped_column(
@@ -326,7 +330,7 @@ class PresentationCode(Base):
 
 
 # ---------------------------------------------------------------------------
-# Accuracy assessment (Phase 6)
+# Accuracy assessment (Phase 6) -- legacy: no longer collected, rows kept
 # ---------------------------------------------------------------------------
 
 

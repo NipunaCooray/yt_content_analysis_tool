@@ -5,8 +5,7 @@ public transport and alternative transport services in Australia. See
 [`youtube_transport_research_tool_handover.md`](youtube_transport_research_tool_handover.md)
 for the full product specification.
 
-This is a research data collection, screening, coding, accuracy-assessment, reliability, and
-export tool — not a general-purpose YouTube analytics dashboard.
+This is a research data collection, screening, coding, reliability, and export tool — not a general-purpose YouTube analytics dashboard.
 
 > **Production research data must not be stored in a local SQLite database on Streamlit
 > Community Cloud.** Streamlit Cloud's local disk is not persistent — it can be wiped on
@@ -29,15 +28,18 @@ PostgreSQL-backed production deployment path**:
   search, as a filter independent of sort order; saved per run and as part of the approved
   strategy
 - Screening: include/exclude/unsure decisions with reasons, notes, and filters
-- Video coding: characteristics, information-coverage, older-adult-needs, and presentation
-  coding, gated to included videos
-- Accuracy assessment: claim-level fact-checking against official sources
+- Video coding: characteristics (including free-text accuracy-related notes),
+  information-coverage (30 items in 8 categories), and older-adult-needs (4 Yes/No items)
+  coding, gated to included videos. The framework was revised after researcher user testing:
+  presentation coding and the claim-level accuracy assessment page were removed, and their
+  historical rows are kept in the database and exported as archived legacy datasets
 - **Reliability**: each reviewer's screening/coding is kept as an independent record (never
   overwritten by a second reviewer), a random double-coding sample selector, blind-until-
   completion comparison, percentage agreement, and Cohen's kappa
 - Dashboard: study-wide counters and descriptive charts, including a reliability summary
-- Export: the 14 required CSV/JSON datasets plus 3 reliability datasets (every reviewer's raw
-  records, and a computed agreement/kappa summary), individually or as one ZIP
+- Export: the 12 core CSV/JSON datasets plus 3 reliability datasets (every reviewer's raw
+  records, and a computed agreement/kappa summary) and 4 archived legacy-coding datasets,
+  individually or as one ZIP
 - **PostgreSQL in production, SQLite for local dev/tests**: pilot/full search runs are durable
   (a row exists as soon as a run starts, results save incrementally per query, and the run's
   status reflects partial/failed progress rather than losing work on a crash), Alembic manages
@@ -191,8 +193,8 @@ Before starting the real study, verify the deployed app end-to-end:
 - **Search approval** — approve a test strategy, confirm the publication-date filter and search
   order persist
 - **Screening** — include/exclude a test video, refresh, confirm the decision persists
-- **Coding** — code a test video, refresh, confirm the values persist
-- **Accuracy** — add a test accuracy claim, refresh, confirm it persists
+- **Coding** — code a test video (including an accuracy-related note), refresh, confirm the
+  values persist
 - **Export** — export test data, verify IDs and values look right
 - **Database diagnostics** — check the Settings page shows "Connected (postgresql)"
 
@@ -244,8 +246,8 @@ tests/                  # pytest suite (mocked YouTube API, SQLite; PostgreSQL t
 data/                   # local SQLite database file (git-ignored) -- dev/test only
 ```
 
-Coding-domain vocabularies (transport modes, information-coverage domains, older-adult needs,
-accuracy categories, etc.) live centrally in `utils/constants.py` so the research team can amend
+Coding-domain vocabularies (transport modes, information-coverage items, older-adult needs,
+etc.) live centrally in `utils/constants.py` so the research team can amend
 the coding framework without touching UI code.
 
 ## License

@@ -8,6 +8,8 @@ from db import crud
 from db.database import get_session
 from services import coding_service
 from utils.constants import (
+    ACCURACY_NOTES_HELP,
+    ACCURACY_NOTES_LABEL,
     AUDIENCE_TYPES,
     INFORMATION_COVERAGE_CATEGORIES,
     INFORMATION_COVERAGE_ITEMS,
@@ -259,6 +261,12 @@ with col_form:
             "Notes", value=(my_current_coding.notes if my_current_coding else "") or "",
             key=f"char_notes_{current_pk}",
         )
+        accuracy_notes = st.text_area(
+            ACCURACY_NOTES_LABEL,
+            value=(my_current_coding.accuracy_notes if my_current_coding else "") or "",
+            key=f"accuracy_notes_{current_pk}",
+        )
+        st.caption(ACCURACY_NOTES_HELP)
 
     with tab_info:
         st.caption("For each item, is this information present in the video?")
@@ -287,7 +295,7 @@ with col_form:
                         value = st.segmented_control(
                             item.label, INFORMATION_COVERAGE_VALUES,
                             default=saved_value if saved_value in INFORMATION_COVERAGE_VALUES else None,
-                            key=value_keys[item.key],
+                            key=value_keys[item.key], help=item.help,
                         )
                     with c2:
                         note = st.text_input(
@@ -341,6 +349,7 @@ with col_form:
             intended_audience=intended_audience,
             older_adult_targeted=older_adult_targeted,
             notes=char_notes or None,
+            accuracy_notes=accuracy_notes or None,
             information_domain_values=information_domain_values,
             older_adult_need_values=older_adult_need_values,
             mark_complete=mark_complete,

@@ -70,6 +70,7 @@ def fully_populated_study(db_session, monkeypatch):
         db_session, study_id=study.id, video_pk=video.id, reviewer_id=reviewer.id,
         transport_modes=["Bus"], jurisdictions=["NSW"], uploader_type="Media",
         intended_audience="General public", older_adult_targeted="No", notes=None,
+        accuracy_notes="Says seniors travel free after 9 am; may be outdated.",
         information_domain_values=full_information_coverage(
             payment_how_to_pay=("Present", "clear"),
         ),
@@ -78,11 +79,15 @@ def fully_populated_study(db_session, monkeypatch):
         ),
         mark_complete=True,
     )
-    crud.create_accuracy_claim(
-        db_session, study_id=study.id, video_pk=video.id, reviewer_id=reviewer.id,
+    # A legacy claim from the removed accuracy-assessment page.
+    from db.models import AccuracyClaim
+
+    db_session.add(AccuracyClaim(
+        study_id=study.id, video_id=video.id, reviewer_id=reviewer.id,
         claim_text="You need an Opal card.", category="Payment",
-        official_source_url="https://transportnsw.info", assessment="Correct", notes=None,
-    )
+        official_source_url="https://transportnsw.info", assessment="Correct",
+    ))
+    db_session.commit()
     return study
 
 
@@ -96,13 +101,15 @@ def test_export_filename_matches_spec_naming_convention(db_session):
 
 def test_all_datasets_registered():
     required = [d for d in export_service.EXPORT_DATASETS if d.required]
-    # Handover doc section 22's 14, less presentation coding (removed from
-    # the framework after user testing -- now archived as legacy below).
-    assert len(required) == 13
-    assert "presentation_coding" not in {d.key for d in export_service.EXPORT_DATASETS}
-    # Plus 3 reliability datasets (Phase 8) and 3 legacy-coding archives.
+    # Handover doc section 22's 14, less presentation coding and accuracy
+    # claims (removed after user testing -- now archived as legacy below).
+    assert len(required) == 12
+    keys = {d.key for d in export_service.EXPORT_DATASETS}
+    assert "presentation_coding" not in keys
+    assert "accuracy_claims" not in keys
+    # Plus 3 reliability datasets (Phase 8) and 4 legacy archives.
     assert len(export_service.EXPORT_DATASETS) == 19
-    assert len({d.key for d in export_service.EXPORT_DATASETS}) == 19  # no duplicate keys
+    assert len(keys) == 19  # no duplicate keys
 
 
 def test_all_datasets_populated_for_a_fully_worked_study(db_session, fully_populated_study):
@@ -126,7 +133,7 @@ def test_all_datasets_populated_for_a_fully_worked_study(db_session, fully_popul
     assert row_counts["legacy_information_domains"] == 0
     assert row_counts["legacy_older_adult_needs"] == 0
     assert row_counts["legacy_presentation_coding"] == 0
-    assert row_counts["accuracy_claims"] == 1
+    assert row_counts["legacy_accuracy_claims"] == 1
     assert row_counts["reviewers"] == 1
 
 
@@ -136,7 +143,7 @@ def test_unique_videos_df_includes_derived_statuses(db_session, fully_populated_
     row = df.iloc[0]
     assert row["screening_status"] == "Included"
     assert row["coding_status"] == "Complete"
-    assert row["accuracy_status"] == "In progress"  # claim exists, review not marked complete
+    assert "accuracy_status" not in df.columns  # accuracy assessment removed
 
 
 def test_information_domains_df_is_long_format_with_framework_columns(db_session, fully_populated_study):
@@ -177,7 +184,7 @@ def test_coding_exports_keep_each_reviewers_rows(db_session, fully_populated_stu
     coding_service.save_video_coding(
         db_session, study_id=study.id, video_pk=video.id, reviewer_id=second.id,
         transport_modes=[], jurisdictions=[], uploader_type=None, intended_audience=None,
-        older_adult_targeted=None, notes=None,
+        older_adult_targeted=None, notes=None, accuracy_notes=None,
         information_domain_values=full_information_coverage(payment_how_to_pay=("Absent", None)),
         older_adult_need_values=full_older_adult_needs(older_payment=("Yes", "Tap on, tap off")),
         mark_complete=True,
@@ -193,6 +200,14 @@ def test_coding_exports_keep_each_reviewers_rows(db_session, fully_populated_stu
     pay_need = needs[needs["need_key"] == "older_payment"].set_index("reviewer_name")
     assert pay_need["mentioned"].to_dict() == {"Jane Doe": "No", "Second Reviewer": "Yes"}
     assert pay_need.loc["Second Reviewer", "notes"] == "Tap on, tap off"
+
+    # accuracy_notes is reviewer-specific: each reviewer's own (or none).
+    all_coding = export_service.video_coding_all_reviewers_df(db_session, study.id)
+    by_reviewer = all_coding.set_index("reviewer_name")["accuracy_notes"]
+    assert by_reviewer["Jane Doe"] == "Says seniors travel free after 9 am; may be outdated."
+    assert by_reviewer.isna()["Second Reviewer"]
+    canonical = export_service.video_characteristics_df(db_session, study.id)
+    assert canonical.iloc[0]["accuracy_notes"] == "Says seniors travel free after 9 am; may be outdated."
 
 
 def test_legacy_coding_is_archived_separately_not_mixed_in(db_session, fully_populated_study):
@@ -230,7 +245,7 @@ def test_csv_bytes_are_valid_and_include_header(db_session, fully_populated_stud
 
 def test_json_bytes_are_valid_json(db_session, fully_populated_study):
     study = fully_populated_study
-    df = export_service.accuracy_claims_df(db_session, study.id)
+    df = export_service.legacy_accuracy_claims_df(db_session, study.id)
     json_bytes = export_service.to_json_bytes(df)
     parsed = json.loads(json_bytes)
     assert isinstance(parsed, list)
@@ -239,7 +254,7 @@ def test_json_bytes_are_valid_json(db_session, fully_populated_study):
 
 def test_empty_dataset_still_produces_valid_csv_header_only(db_session):
     study = crud.create_study(db_session, name="Empty study")
-    dataset = next(d for d in export_service.EXPORT_DATASETS if d.key == "accuracy_claims")
+    dataset = next(d for d in export_service.EXPORT_DATASETS if d.key == "legacy_accuracy_claims")
     df = export_service.build_dataframe(db_session, study.id, dataset)
     assert df.empty
     csv_bytes = export_service.to_csv_bytes(df)
@@ -255,7 +270,8 @@ def test_build_zip_export_contains_every_dataset_csv(db_session, fully_populated
         assert "study_001_presentation_coding.csv" not in names
         assert "study_001_legacy_presentation_coding.csv" in names
         assert "study_001_search_queries.csv" in names
-        assert "study_001_accuracy_claims.csv" in names
+        assert "study_001_accuracy_claims.csv" not in names
+        assert "study_001_legacy_accuracy_claims.csv" in names
         assert "study_001_reliability_summary.csv" in names
         # Spot-check one file actually has real content.
         content = zf.read("study_001_screening.csv").decode("utf-8")

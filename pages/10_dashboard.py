@@ -8,22 +8,12 @@ from components.caching import cached_export_dataframe
 from components.navigation import page_header, render_context_sidebar, require_study
 from db import crud
 from db.database import get_session
-from services import accuracy_service, coding_service, export_service, pilot_service, reliability_service, screening_service
+from services import coding_service, export_service, pilot_service, reliability_service, screening_service
 
 # Single consistent hue for plain magnitude bars (dataviz skill: sequential
 # blue, categorical slot 1) -- color isn't encoding a second variable here,
 # so one hue throughout is correct rather than a rainbow per bar.
 BAR_COLOR = "#2a78d6"
-
-# Accuracy assessment is a genuine correctness status, so it gets the
-# reserved status palette instead of the plain bar color.
-ACCURACY_COLORS = {
-    "Correct": "#0ca30c",           # good
-    "Correct but incomplete": "#fab219",  # warning
-    "Outdated": "#ec835a",          # serious
-    "Incorrect": "#d03b3b",         # critical
-    "Unverifiable": "#898781",      # muted
-}
 
 db = get_session()
 current_study, current_reviewer = render_context_sidebar(db)
@@ -71,11 +61,6 @@ screening_progress = screening_service.compute_progress(unique_videos, decisions
 included_videos = crud.list_included_videos(db, study_id)
 codings = crud.list_video_codings(db, study_id)
 coding_progress = coding_service.compute_progress([v.id for v in included_videos], codings)
-review_statuses = crud.list_accuracy_review_statuses(db, study_id)
-claim_counts = crud.count_accuracy_claims(db, study_id)
-accuracy_progress = accuracy_service.compute_progress(
-    [v.id for v in included_videos], review_statuses, claim_counts
-)
 pilot_runs = crud.list_pilot_search_runs(db, study_id)
 
 st.subheader("Study overview")
@@ -87,7 +72,7 @@ r1[3].metric("Included", screening_progress.included)
 r2 = st.columns(4)
 r2[0].metric("Excluded", screening_progress.excluded)
 r2[1].metric("Coded (started)", coding_progress.in_progress + coding_progress.complete)
-r2[2].metric("Accuracy reviews completed", accuracy_progress.complete)
+r2[2].metric("Coding complete", coding_progress.complete)
 r2[3].metric("Pilot searches completed", len(pilot_runs))
 
 st.markdown("---")
@@ -170,18 +155,10 @@ if not info_df.empty:
         )
 
 st.markdown("---")
-st.subheader("Accuracy & screening")
+st.subheader("Screening")
 
-col5, col6 = st.columns(2)
+col5, _ = st.columns(2)
 with col5:
-    st.caption("Accuracy assessment distribution (claims)")
-    claims_df = cached_export_dataframe(db, study_id, "accuracy_claims")
-    if claims_df.empty:
-        st.caption("No accuracy claims recorded yet.")
-    else:
-        _bar_chart(claims_df["assessment"].value_counts(), "Claims", color=ACCURACY_COLORS)
-
-with col6:
     st.caption("Screening exclusion reasons")
     screening_df = cached_export_dataframe(db, study_id, "screening")
     if screening_df.empty or screening_df["exclusion_reason"].dropna().empty:

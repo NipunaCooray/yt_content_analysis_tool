@@ -267,6 +267,8 @@ _COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
         "started_at": "DATETIME",
         "completed_at": "DATETIME",
         "error_message": "TEXT",
+    },    "video_coding": {
+        "accuracy_notes": "TEXT",
     },
 }
 

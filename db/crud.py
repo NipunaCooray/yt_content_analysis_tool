@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from db.models import (
     AccuracyClaim,
-    AccuracyReviewStatus,
     AuditLog,
     DoubleCodingSample,
     FullSearchRun,
@@ -698,6 +697,7 @@ def upsert_video_coding(
     intended_audience: str | None,
     older_adult_targeted: str | None,
     notes: str | None,
+    accuracy_notes: str | None,
     status: str,
 ) -> VideoCoding:
     """One coding record per (video, reviewer): create on first save for that
@@ -715,6 +715,7 @@ def upsert_video_coding(
             intended_audience=intended_audience,
             older_adult_targeted=older_adult_targeted,
             notes=notes,
+            accuracy_notes=accuracy_notes,
             status=status,
             coded_at=utcnow(),
         )
@@ -728,6 +729,7 @@ def upsert_video_coding(
         existing.intended_audience = intended_audience
         existing.older_adult_targeted = older_adult_targeted
         existing.notes = notes
+        existing.accuracy_notes = accuracy_notes
         existing.status = status
         action = "video_coding_edited"
 
@@ -794,116 +796,14 @@ def upsert_older_adult_need_code(
 
 
 # ---------------------------------------------------------------------------
-# Accuracy claims (Phase 6)
+# Accuracy claims (Phase 6) -- legacy
 # ---------------------------------------------------------------------------
-
-
-def create_accuracy_claim(db: Session, study_id: int, video_pk: int, **fields: Any) -> AccuracyClaim:
-    claim = AccuracyClaim(study_id=study_id, video_id=video_pk, **fields)
-    db.add(claim)
-    db.commit()
-    db.refresh(claim)
-    log_audit_event(
-        db, "accuracy_claim_added", "accuracy_claim", claim.id, study_id=study_id,
-        reviewer_id=claim.reviewer_id, details={"video_id": video_pk, "category": claim.category},
-    )
-    return claim
-
-
-def list_accuracy_claims(db: Session, study_id: int, video_pk: int) -> list[AccuracyClaim]:
-    stmt = (
-        select(AccuracyClaim)
-        .where(AccuracyClaim.study_id == study_id, AccuracyClaim.video_id == video_pk)
-        .order_by(AccuracyClaim.created_at)
-    )
-    return list(db.execute(stmt).scalars().all())
-
-
-def count_accuracy_claims(db: Session, study_id: int) -> dict[int, int]:
-    """video_id (PK) -> number of claims recorded, for batch status lookups."""
-    stmt = select(AccuracyClaim.video_id).where(AccuracyClaim.study_id == study_id)
-    counts: dict[int, int] = {}
-    for (video_pk,) in db.execute(stmt).all():
-        counts[video_pk] = counts.get(video_pk, 0) + 1
-    return counts
-
-
-def get_accuracy_claim(db: Session, claim_id: int) -> AccuracyClaim | None:
-    return db.get(AccuracyClaim, claim_id)
-
-
-def update_accuracy_claim(db: Session, claim_id: int, **fields: Any) -> AccuracyClaim | None:
-    claim = db.get(AccuracyClaim, claim_id)
-    if claim is None:
-        return None
-    for key, value in fields.items():
-        setattr(claim, key, value)
-    claim.updated_at = utcnow()
-    db.commit()
-    db.refresh(claim)
-    log_audit_event(
-        db, "accuracy_claim_edited", "accuracy_claim", claim.id, study_id=claim.study_id,
-        reviewer_id=claim.reviewer_id, details=fields,
-    )
-    return claim
-
-
-def delete_accuracy_claim(db: Session, claim_id: int) -> bool:
-    claim = db.get(AccuracyClaim, claim_id)
-    if claim is None:
-        return False
-    study_id = claim.study_id
-    video_pk = claim.video_id
-    db.delete(claim)
-    db.commit()
-    log_audit_event(
-        db, "accuracy_claim_deleted", "accuracy_claim", claim_id, study_id=study_id,
-        details={"video_id": video_pk},
-    )
-    return True
-
-
-def get_accuracy_review_status(db: Session, video_pk: int) -> AccuracyReviewStatus | None:
-    stmt = select(AccuracyReviewStatus).where(AccuracyReviewStatus.video_id == video_pk)
-    return db.execute(stmt).scalars().first()
-
-
-def list_accuracy_review_statuses(db: Session, study_id: int) -> dict[int, AccuracyReviewStatus]:
-    """video_id (PK) -> its review-completion record, for batch status lookups."""
-    stmt = select(AccuracyReviewStatus).where(AccuracyReviewStatus.study_id == study_id)
-    rows = db.execute(stmt).scalars().all()
-    return {row.video_id: row for row in rows}
-
-
-def set_accuracy_review_complete(
-    db: Session, study_id: int, video_pk: int, reviewer_id: int | None, is_complete: bool
-) -> AccuracyReviewStatus:
-    existing = get_accuracy_review_status(db, video_pk)
-    if existing is None:
-        existing = AccuracyReviewStatus(
-            study_id=study_id,
-            video_id=video_pk,
-            reviewer_id=reviewer_id,
-            is_complete=is_complete,
-            completed_at=utcnow() if is_complete else None,
-        )
-        db.add(existing)
-    else:
-        existing.reviewer_id = reviewer_id
-        existing.is_complete = is_complete
-        existing.completed_at = utcnow() if is_complete else None
-    db.commit()
-    db.refresh(existing)
-    log_audit_event(
-        db,
-        "accuracy_review_marked_complete" if is_complete else "accuracy_review_reopened",
-        "accuracy_review_status",
-        existing.id,
-        study_id=study_id,
-        reviewer_id=reviewer_id,
-        details={"video_id": video_pk},
-    )
-    return existing
+#
+# The claim-level accuracy assessment was removed after researcher user
+# testing (accuracy observations are now VideoCoding.accuracy_notes), so
+# there are deliberately no write functions for accuracy_claims or
+# accuracy_review_status any more. Existing rows are kept and only read,
+# for the legacy export below.
 
 
 # ---------------------------------------------------------------------------
@@ -922,6 +822,7 @@ def list_all_pilot_results_for_study(db: Session, study_id: int) -> list[PilotSe
 
 
 def list_accuracy_claims_for_study(db: Session, study_id: int) -> list[AccuracyClaim]:
+    """Legacy claim-level accuracy data (no longer collected), for the archive export."""
     stmt = (
         select(AccuracyClaim)
         .where(AccuracyClaim.study_id == study_id)
