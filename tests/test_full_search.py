@@ -141,3 +141,30 @@ def test_run_full_search_continues_after_one_query_fails(
 
     assert len(outcome.errors) == 1
     assert outcome.raw_results_saved == 5  # only the working query's results
+
+
+def test_run_full_search_stops_after_quota_exceeded(
+    db_session, study_with_queries, monkeypatch
+):
+    from services.youtube_api import YouTubeQuotaExceededError
+
+    study, queries = study_with_queries
+    calls = []
+
+    def quota_search(query, max_results, order, region_code, relevance_language):
+        calls.append(query)
+        if len(calls) == 1:
+            return _fake_search(query, max_results, order, region_code, relevance_language)
+        raise YouTubeQuotaExceededError("quota exceeded")
+
+    monkeypatch.setattr(search_service.youtube_api, "search_videos", quota_search)
+    monkeypatch.setattr(deduplication.youtube_api, "get_video_details", _fake_details)
+
+    outcome = search_service.run_full_search(
+        db_session, study_id=study.id, queries=queries, results_per_query=5,
+        search_order="relevance", approval_id=None,
+    )
+
+    assert len(calls) == 2
+    assert len(outcome.errors) == 1
+    assert outcome.raw_results_saved == 5

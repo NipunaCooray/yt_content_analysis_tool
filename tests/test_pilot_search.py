@@ -205,3 +205,26 @@ def test_approve_search_strategy_snapshots_active_queries(db_session, study_with
 
     updated_study = crud.get_study(db_session, study.id)
     assert updated_study.search_status == "Ready for full search"
+
+
+def test_run_pilot_search_stops_after_quota_exceeded(db_session, study_with_queries, monkeypatch):
+    study, queries = study_with_queries
+    from services.youtube_api import YouTubeQuotaExceededError
+
+    calls = []
+
+    def quota_search(query, max_results, order, region_code, relevance_language):
+        calls.append(query)
+        raise YouTubeQuotaExceededError("quota exceeded")
+
+    monkeypatch.setattr(pilot_service.youtube_api, "search_videos", quota_search)
+
+    outcome = pilot_service.run_pilot_search(
+        db_session, study_id=study.id, queries=queries, results_per_query=10,
+        search_order="relevance", reviewer_id=None,
+    )
+
+    assert len(queries) > 1
+    assert len(calls) == 1  # no further API calls once quota is gone
+    assert len(outcome.errors) == 1
+    assert "Stopped early" in outcome.errors[0]

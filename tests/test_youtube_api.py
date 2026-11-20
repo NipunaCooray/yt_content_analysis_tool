@@ -128,3 +128,57 @@ def test_search_videos_stops_when_api_has_no_more_pages(monkeypatch):
 
     assert len(results) == 5
     assert fake_client.call_count == 1
+
+
+# --- HTTP error translation -------------------------------------------------
+
+_FAKE_KEY = "AIzaFAKEKEY_for_tests_0123456789abcdef"
+
+
+def _http_error(status: int, reason: str, message: str):
+    import json
+
+    import httplib2
+    from googleapiclient.errors import HttpError
+
+    resp = httplib2.Response({"status": status})
+    resp.reason = "Too Many Requests" if status == 429 else "Error"
+    body = json.dumps(
+        {"error": {"code": status, "message": message,
+                   "errors": [{"message": message, "domain": "global", "reason": reason}]}}
+    ).encode()
+    uri = f"https://youtube.googleapis.com/youtube/v3/search?part=snippet&q=bus&key={_FAKE_KEY}&alt=json"
+    return HttpError(resp, body, uri=uri)
+
+
+def test_429_search_queries_per_day_is_treated_as_quota(monkeypatch):
+    monkeypatch.setattr(youtube_api, "get_api_key", lambda: _FAKE_KEY)
+    exc = _http_error(
+        429, "rateLimitExceeded",
+        "Quota exceeded for quota metric 'Search Queries' and limit 'Search Queries per day'",
+    )
+    translated = youtube_api._translate_http_error(exc)
+    assert isinstance(translated, youtube_api.YouTubeQuotaExceededError)
+    assert _FAKE_KEY not in str(translated)
+
+
+def test_403_quota_exceeded_is_treated_as_quota(monkeypatch):
+    monkeypatch.setattr(youtube_api, "get_api_key", lambda: _FAKE_KEY)
+    exc = _http_error(403, "quotaExceeded", "The request cannot be completed because you have exceeded your quota.")
+    assert isinstance(youtube_api._translate_http_error(exc), youtube_api.YouTubeQuotaExceededError)
+
+
+def test_error_messages_never_contain_the_api_key(monkeypatch):
+    monkeypatch.setattr(youtube_api, "get_api_key", lambda: _FAKE_KEY)
+    for status, reason in [(400, "badRequest"), (500, "backendError"), (503, "unavailable")]:
+        translated = youtube_api._translate_http_error(_http_error(status, reason, "Something broke"))
+        assert not isinstance(translated, youtube_api.YouTubeQuotaExceededError)
+        assert _FAKE_KEY not in str(translated)
+        assert "key=" not in str(translated)
+        assert "Something broke" in str(translated)
+
+
+def test_unexpected_error_text_is_redacted(monkeypatch):
+    monkeypatch.setattr(youtube_api, "get_api_key", lambda: _FAKE_KEY)
+    exc = RuntimeError(f"connection reset fetching https://x/search?q=a&key={_FAKE_KEY}")
+    assert _FAKE_KEY not in str(youtube_api._translate_http_error(exc))

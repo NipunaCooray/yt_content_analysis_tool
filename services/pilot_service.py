@@ -89,7 +89,7 @@ def run_pilot_search(
 
     errors: list[str] = []
     saved = 0
-    for query in queries:
+    for index, query in enumerate(queries, start=1):
         try:
             items = youtube_api.search_videos(
                 query.query_text,
@@ -99,6 +99,16 @@ def run_pilot_search(
                 relevance_language=relevance_language,
                 **date_params,
             )
+        except youtube_api.YouTubeQuotaExceededError as exc:
+            # Every later query would fail the same way -- stop rather than
+            # burn through the list producing one identical error per query.
+            skipped = len(queries) - index
+            msg = f"Query '{query.query_text}': {exc}"
+            if skipped:
+                msg += f" Stopped early; {skipped} remaining quer(y/ies) not run."
+            logger.warning(msg)
+            errors.append(msg)
+            break
         except youtube_api.YouTubeAPIError as exc:
             msg = f"Query '{query.query_text}': {exc}"
             logger.warning(msg)

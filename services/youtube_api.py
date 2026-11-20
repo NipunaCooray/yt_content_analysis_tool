@@ -9,6 +9,7 @@ handover doc section 10.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -70,11 +71,40 @@ def _build_client():
     return build("youtube", "v3", developerKey=api_key, cache_discovery=False)
 
 
+_QUOTA_REASONS = {"quotaExceeded", "rateLimitExceeded", "dailyLimitExceeded", "userRateLimitExceeded"}
+
+
+def _redact_api_key(text: str) -> str:
+    """Strip the API key from text before it reaches the UI, the DB or the logs.
+
+    googleapiclient's HttpError str() embeds the full request URL, key= included.
+    """
+    text = re.sub(r"([?&]key=)[^&\s\"'>]+", r"\1REDACTED", text)
+    api_key = None
+    try:
+        api_key = get_api_key()
+    except Exception:  # noqa: BLE001 - redaction must never raise
+        api_key = None
+    if api_key:
+        text = text.replace(api_key, "REDACTED")
+    return text
+
+
+def _http_error_message(exc: Exception) -> str:
+    """The API's own human-readable message, without the request URL."""
+    message = ""
+    try:
+        message = exc._get_reason() or ""  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        message = getattr(exc, "reason", "") or ""
+    return _redact_api_key(str(message).strip()) or "no details returned"
+
+
 def _translate_http_error(exc: Exception) -> YouTubeAPIError:
     try:
         from googleapiclient.errors import HttpError
     except ImportError:  # pragma: no cover
-        return YouTubeAPIError(str(exc))
+        return YouTubeAPIError(_redact_api_key(str(exc)))
 
     if isinstance(exc, HttpError):
         status = getattr(exc.resp, "status", None)
@@ -83,20 +113,23 @@ def _translate_http_error(exc: Exception) -> YouTubeAPIError:
             reason = exc.error_details[0].get("reason", "") if exc.error_details else ""
         except Exception:
             reason = ""
-        if status == 403 and ("quota" in str(exc).lower() or reason == "quotaExceeded"):
+        message = _http_error_message(exc)
+        # Daily quota exhaustion arrives as 403 quotaExceeded for the units quota,
+        # but as 429 rateLimitExceeded for the "Search Queries per day" limit.
+        if status in (403, 429) and (reason in _QUOTA_REASONS or "quota" in message.lower()):
             return YouTubeQuotaExceededError(
                 "YouTube API quota exceeded for today. Try again after the daily quota "
                 "resets (midnight Pacific time), or use a different API key."
             )
         if status == 400:
-            return YouTubeAPIError(f"Invalid YouTube API request: {exc}")
+            return YouTubeAPIError(f"Invalid YouTube API request: {message}")
         if status == 403:
             return YouTubeAPIError(
                 "YouTube API request was refused (403). Check that your API key is valid "
                 "and that the YouTube Data API v3 is enabled for it."
             )
-        return YouTubeAPIError(f"YouTube API error ({status}): {exc}")
-    return YouTubeAPIError(f"Unexpected error calling YouTube API: {exc}")
+        return YouTubeAPIError(f"YouTube API error ({status}): {message}")
+    return YouTubeAPIError(f"Unexpected error calling YouTube API: {_redact_api_key(str(exc))}")
 
 
 def search_videos(
