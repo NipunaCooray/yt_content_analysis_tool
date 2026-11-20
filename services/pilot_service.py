@@ -33,6 +33,7 @@ class PilotRunOutcome:
     queries_run: int
     results_saved: int
     errors: list[str]
+    queries_failed: int = 0
 
 
 def run_pilot_search(
@@ -88,8 +89,9 @@ def run_pilot_search(
     )
 
     errors: list[str] = []
+    quota_failed: list[str] = []
     saved = 0
-    for index, query in enumerate(queries, start=1):
+    for query in queries:
         try:
             items = youtube_api.search_videos(
                 query.query_text,
@@ -99,16 +101,12 @@ def run_pilot_search(
                 relevance_language=relevance_language,
                 **date_params,
             )
-        except youtube_api.YouTubeQuotaExceededError as exc:
-            # Every later query would fail the same way -- stop rather than
-            # burn through the list producing one identical error per query.
-            skipped = len(queries) - index
-            msg = f"Query '{query.query_text}': {exc}"
-            if skipped:
-                msg += f" Stopped early; {skipped} remaining quer(y/ies) not run."
-            logger.warning(msg)
-            errors.append(msg)
-            break
+        except youtube_api.YouTubeQuotaExceededError:
+            # Keep going: past the limit Google still lets some calls through,
+            # and a failed call costs nothing. Reported as one line below.
+            logger.warning("Query '%s': YouTube search quota exceeded.", query.query_text)
+            quota_failed.append(query.query_text)
+            continue
         except youtube_api.YouTubeAPIError as exc:
             msg = f"Query '{query.query_text}': {exc}"
             logger.warning(msg)
@@ -134,6 +132,10 @@ def run_pilot_search(
             saved += 1
         db.commit()  # persist this query's results now, not at the end of the whole run
 
+    queries_failed = len(errors) + len(quota_failed)
+    if quota_failed:
+        errors.append(youtube_api.summarise_quota_failures(quota_failed))
+
     if not errors:
         final_status = RUN_STATUS_COMPLETED
     elif saved > 0:
@@ -147,7 +149,10 @@ def run_pilot_search(
         error_message="; ".join(errors) if errors else None,
     )
 
-    return PilotRunOutcome(run_id=run.id, queries_run=len(queries), results_saved=saved, errors=errors)
+    return PilotRunOutcome(
+        run_id=run.id, queries_run=len(queries), results_saved=saved,
+        errors=errors, queries_failed=queries_failed,
+    )
 
 
 @dataclass

@@ -28,7 +28,8 @@ class YouTubeAPIKeyMissingError(YouTubeAPIError):
 
 
 class YouTubeQuotaExceededError(YouTubeAPIError):
-    pass
+    """Daily quota hit. Enforcement is approximate near the limit, so a later
+    call can still succeed -- don't abandon a run on the first one."""
 
 
 @dataclass
@@ -115,7 +116,9 @@ def _translate_http_error(exc: Exception) -> YouTubeAPIError:
             reason = ""
         message = _http_error_message(exc)
         # Daily quota exhaustion arrives as 403 quotaExceeded for the units quota,
-        # but as 429 rateLimitExceeded for the "Search Queries per day" limit.
+        # but as 429 rateLimitExceeded for search.list's own "Search Queries per
+        # day" bucket (June 2026). Near the limit Google enforces it loosely, so
+        # some calls still succeed after the first 429 -- callers must not stop.
         if status in (403, 429) and (reason in _QUOTA_REASONS or "quota" in message.lower()):
             return YouTubeQuotaExceededError(
                 "YouTube API quota exceeded for today. Try again after the daily quota "
@@ -145,7 +148,7 @@ def search_videos(
 
     YouTube caps each search.list call at 50 results, so requests for more
     than that are paginated internally via nextPageToken (each page is a
-    separate quota-consuming call -- see estimate_search_calls()).
+    separate search call against the daily quota -- see estimate_search_calls()).
 
     published_after/published_before are full ISO-8601 UTC timestamps (e.g.
     "2020-01-01T00:00:00Z") matching the YouTube API's own parameter format --
@@ -211,12 +214,21 @@ def search_videos(
     return results
 
 
-def estimate_search_calls(num_queries: int, max_results: int) -> int:
-    """Number of search.list calls (quota units) a run will use.
+def summarise_quota_failures(query_texts: list[str]) -> str:
+    """One line covering every query that hit the daily search quota."""
+    listed = ", ".join(f"'{q}'" for q in query_texts)
+    return (
+        f"YouTube search quota exceeded for today: {len(query_texts)} quer(y/ies) failed "
+        f"({listed}). The quota resets at midnight Pacific time; re-run these queries then."
+    )
 
-    Each call costs ~100 quota units regardless of page size, and each page
-    holds at most 50 results, so requesting more than 50 per query costs
-    proportionally more.
+
+def estimate_search_calls(num_queries: int, max_results: int) -> int:
+    """Number of search.list calls a run will use.
+
+    Since June 2026 search.list has its own quota bucket (default 100 calls
+    per day per project, 1 per call). Each page holds at most 50 results, so
+    requesting more than 50 per query costs proportionally more calls.
     """
     pages_per_query = max(1, math.ceil(max_results / 50))
     return num_queries * pages_per_query

@@ -207,24 +207,32 @@ def test_approve_search_strategy_snapshots_active_queries(db_session, study_with
     assert updated_study.search_status == "Ready for full search"
 
 
-def test_run_pilot_search_stops_after_quota_exceeded(db_session, study_with_queries, monkeypatch):
+def test_run_pilot_search_keeps_going_through_quota_errors(db_session, study_with_queries, monkeypatch):
+    """Near the limit Google's 429s are intermittent -- a later query can still
+    succeed, so every query must be tried and quota failures reported once."""
     study, queries = study_with_queries
     from services.youtube_api import YouTubeQuotaExceededError
 
+    assert len(queries) >= 2
     calls = []
 
-    def quota_search(query, max_results, order, region_code, relevance_language):
+    def intermittent_quota(query, max_results, order, region_code, relevance_language):
         calls.append(query)
-        raise YouTubeQuotaExceededError("quota exceeded")
+        if len(calls) == 1:
+            raise YouTubeQuotaExceededError("quota exceeded")
+        return _fake_search_results(query, max_results)
 
-    monkeypatch.setattr(pilot_service.youtube_api, "search_videos", quota_search)
+    monkeypatch.setattr(pilot_service.youtube_api, "search_videos", intermittent_quota)
 
     outcome = pilot_service.run_pilot_search(
         db_session, study_id=study.id, queries=queries, results_per_query=10,
         search_order="relevance", reviewer_id=None,
     )
 
-    assert len(queries) > 1
-    assert len(calls) == 1  # no further API calls once quota is gone
-    assert len(outcome.errors) == 1
-    assert "Stopped early" in outcome.errors[0]
+    assert len(calls) == len(queries)  # did not stop at the first quota error
+    assert outcome.results_saved == 10 * (len(queries) - 1)
+    assert outcome.queries_failed == 1
+    assert len(outcome.errors) == 1 and "quota exceeded for today" in outcome.errors[0]
+    run = crud.get_pilot_search_run(db_session, outcome.run_id)
+    assert run.status == "partial"
+    assert queries[0].query_text in run.error_message

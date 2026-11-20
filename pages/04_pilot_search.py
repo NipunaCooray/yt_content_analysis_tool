@@ -109,8 +109,8 @@ with st.expander("Run a new pilot search", expanded=not all_runs):
 
         est_calls = estimate_search_calls(len(selected_ids), int(results_per_query))
         st.caption(
-            f"Estimated API usage: ~{est_calls} search call(s) "
-            f"(~{est_calls * 100} search-quota units)."
+            f"Estimated API usage: ~{est_calls} search call(s) of the project's "
+            "~100 per day (shared by everyone using the app)."
         )
 
         if st.button(
@@ -166,7 +166,7 @@ with st.expander("Run a new pilot search", expanded=not all_runs):
                 st.session_state[_PILOT_RUN_IN_PROGRESS] = False
             if outcome.errors:
                 st.warning(
-                    f"Saved {outcome.results_saved} result(s), but {len(outcome.errors)} "
+                    f"Saved {outcome.results_saved} result(s), but {outcome.queries_failed} "
                     f"quer(y/ies) failed:\n\n" + "\n".join(f"- {e}" for e in outcome.errors)
                 )
             else:

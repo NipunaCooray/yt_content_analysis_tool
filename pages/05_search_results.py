@@ -126,8 +126,9 @@ with st.expander("Run full search", expanded=not crud.list_full_search_runs(db, 
 
         est_calls = estimate_search_calls(len(selected_ids), int(results_per_query))
         st.caption(
-            f"Estimated API usage: ~{est_calls} search call(s) "
-            f"(~{est_calls * 100} search-quota units), plus metadata lookups for new videos."
+            f"Estimated API usage: ~{est_calls} search call(s) of the project's "
+            "~100 per day (shared by everyone using the app), plus metadata lookups "
+            "for new videos (separate, much larger allowance)."
         )
 
         confirmed = True
@@ -172,7 +173,7 @@ with st.expander("Run full search", expanded=not crud.list_full_search_runs(db, 
                 )
             if outcome.errors:
                 st.warning(
-                    msg + f"\n\n{len(outcome.errors)} quer(y/ies) failed:\n\n"
+                    msg + f"\n\n{outcome.queries_failed} quer(y/ies) failed:\n\n"
                     + "\n".join(f"- {e}" for e in outcome.errors)
                 )
             else:
