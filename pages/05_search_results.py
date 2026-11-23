@@ -8,7 +8,8 @@ import streamlit as st
 from components.navigation import close_and_rerun, page_header, render_context_sidebar, require_study
 from db import crud
 from db.database import get_session
-from services import coding_service, screening_service, search_service
+from components.search_quota import render_quota_status, render_repeat_warning, render_shortfall_warning
+from services import coding_service, screening_service, search_runs, search_service
 from services.deduplication import best_rank_per_video, queries_per_video
 from services.youtube_api import api_key_configured, estimate_search_calls
 from utils.constants import (
@@ -69,15 +70,48 @@ with st.expander("Run full search", expanded=not crud.list_full_search_runs(db, 
     elif not api_key_configured():
         st.error("No YouTube API key configured. See Settings.")
     else:
+        quota = render_quota_status(db)
         query_options = {q.id: q.query_text for q in active_queries}
         default_selected = [qid for qid in query_options if qid in approved_query_ids] or list(
             query_options.keys()
         )
+        select_key = "full_search_selection"
+        if select_key not in st.session_state:
+            st.session_state[select_key] = default_selected
+        else:  # drop ids no longer offered -- Streamlit raises on unknown values
+            st.session_state[select_key] = [
+                qid for qid in st.session_state[select_key] if qid in query_options
+            ]
+
+        # Retrying failures: offer to select only the queries that failed in the
+        # most recent run that had any, instead of re-running every approved query.
+        for prior in crud.list_full_search_runs(db, study_id):
+            failed_ids = search_runs.failed_query_ids(db, prior)
+            if failed_ids:
+                retry_ids = [qid for qid in failed_ids if qid in query_options]
+                no_longer_active = len(failed_ids) - len(retry_ids)
+
+                def _select_failed(ids=retry_ids) -> None:
+                    st.session_state[select_key] = list(ids)
+
+                st.button(
+                    f"Select only the {len(retry_ids)} failed quer(y/ies) from run #{prior.id}",
+                    on_click=_select_failed,
+                    disabled=not retry_ids,
+                    icon=":material/replay:",
+                )
+                if no_longer_active:
+                    st.caption(
+                        f"{no_longer_active} other failed quer(y/ies) from run #{prior.id} are no "
+                        "longer active, so they can't be selected."
+                    )
+                break
+
         selected_ids = st.multiselect(
             "Queries to include",
             options=list(query_options.keys()),
-            default=default_selected,
             format_func=lambda qid: query_options[qid],
+            key=select_key,
         )
         col1, col2 = st.columns(2)
         results_per_query = col1.number_input(
@@ -126,10 +160,24 @@ with st.expander("Run full search", expanded=not crud.list_full_search_runs(db, 
 
         est_calls = estimate_search_calls(len(selected_ids), int(results_per_query))
         st.caption(
-            f"Estimated API usage: ~{est_calls} search call(s) of the project's "
-            "~100 per day (shared by everyone using the app), plus metadata lookups "
-            "for new videos (separate, much larger allowance)."
+            f"This run needs ~{est_calls} search(es), plus video-detail lookups for new "
+            "videos (a separate, much larger allowance)."
         )
+        render_shortfall_warning(est_calls, quota)
+        if not pub_errors:
+            render_repeat_warning(
+                search_runs.find_repeats(
+                    db, study_id, search_runs.FULL, selected_ids,
+                    search_runs.SearchSettings(
+                        results_per_query=int(results_per_query),
+                        search_order=search_order,
+                        publication_filter_type=pub_filter_type,
+                        published_after=pub_after,
+                        published_before=pub_before,
+                    ),
+                ),
+                query_options, select_key, "in an earlier full search run",
+            )
 
         confirmed = True
         if est_calls > LARGE_RUN_CALL_THRESHOLD:

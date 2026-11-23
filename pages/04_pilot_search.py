@@ -9,7 +9,8 @@ from components.navigation import close_and_rerun, page_header, render_context_s
 from components.video_player import video_thumbnail
 from db import crud
 from db.database import get_session
-from services import pilot_service
+from components.search_quota import render_quota_status, render_repeat_warning, render_shortfall_warning
+from services import pilot_service, search_runs
 from services.youtube_api import api_key_configured, estimate_search_calls
 from utils.constants import (
     IRRELEVANCE_REASONS,
@@ -49,7 +50,20 @@ all_runs = crud.list_pilot_search_runs(db, study_id)
 # Run a new pilot search
 # ---------------------------------------------------------------------------
 
-with st.expander("Run a new pilot search", expanded=not all_runs):
+_NEW_RUN = "New pilot run"
+_ADD_TO_RUN = "Add queries to an existing run"
+
+
+def _sanitise_selection(key: str, options: list[int], default: list[int]) -> None:
+    """Seed a keyed multiselect once, and drop any stale ids no longer offered
+    (a stored value outside `options` would make Streamlit raise)."""
+    if key not in st.session_state:
+        st.session_state[key] = list(default)
+    else:
+        st.session_state[key] = [qid for qid in st.session_state[key] if qid in options]
+
+
+with st.expander("Run a pilot search", expanded=not all_runs):
     if not active_queries:
         st.info("No active queries yet. Add some in Search strategy first.")
     elif not api_key_configured():
@@ -58,64 +72,123 @@ with st.expander("Run a new pilot search", expanded=not all_runs):
             "(see Settings) before running a search."
         )
     else:
-        query_options = {q.id: q.query_text for q in active_queries}
-        selected_ids = st.multiselect(
-            "Queries to include",
-            options=list(query_options.keys()),
-            default=list(query_options.keys()),
-            format_func=lambda qid: query_options[qid],
-        )
-        col1, col2 = st.columns(2)
-        results_per_query = col1.selectbox(
-            "Results per query",
-            PILOT_RESULT_COUNT_OPTIONS,
-            index=PILOT_RESULT_COUNT_OPTIONS.index(10)
-            if 10 in PILOT_RESULT_COUNT_OPTIONS
-            else 0,
-        )
-        search_order = col2.selectbox(
-            "Search order", SEARCH_ORDER_OPTIONS, index=SEARCH_ORDER_OPTIONS.index("relevance")
-        )
+        quota = render_quota_status(db)
+        query_text = {q.id: q.query_text for q in active_queries}
 
-        st.markdown("**Publication period**")
-        pub_filter_type = st.selectbox(
-            "Publication period",
-            PUBLICATION_PERIOD_OPTIONS,
-            index=PUBLICATION_PERIOD_OPTIONS.index(current_study.publication_filter_type)
-            if current_study.publication_filter_type in PUBLICATION_PERIOD_OPTIONS
-            else 0,
-            format_func=lambda code: PUBLICATION_PERIOD_LABELS[code],
-            label_visibility="collapsed",
-        )
-        pub_after = pub_before = None
-        if pub_filter_type == PUBLICATION_FILTER_AFTER:
-            pub_after = st.date_input("Published after", value=current_study.published_after)
-        elif pub_filter_type == PUBLICATION_FILTER_BEFORE:
-            pub_before = st.date_input("Published before", value=current_study.published_before)
-        elif pub_filter_type == PUBLICATION_FILTER_BETWEEN:
-            date_col1, date_col2 = st.columns(2)
-            pub_after = date_col1.date_input("From", value=current_study.published_after)
-            pub_before = date_col2.date_input("To", value=current_study.published_before)
+        mode = _NEW_RUN
+        if all_runs:
+            mode = st.segmented_control(
+                "Run as", [_NEW_RUN, _ADD_TO_RUN], default=_NEW_RUN, key="pilot_run_mode"
+            ) or _NEW_RUN
 
-        pub_errors = validate_publication_date_filter(pub_filter_type, pub_after, pub_before)
-        for e in pub_errors:
-            st.error(e)
-        st.caption(
-            f"Publication period: {format_publication_period_label(pub_filter_type, pub_after, pub_before)}. "
-            "This filters which videos are found; it does not change the sort order above."
-        )
+        target_run = None
+        if mode == _ADD_TO_RUN:
+            st.caption(
+                "Searches only the queries you add, using the chosen run's settings, so that "
+                "run's performance table, diagnostics and review cover everything together — "
+                "without re-searching the queries already in it."
+            )
+            target_run_id = st.selectbox(
+                "Run to add to",
+                options=[r.id for r in all_runs],
+                format_func=lambda rid: next(
+                    f"Run #{r.id} — {r.run_timestamp:%Y-%m-%d %H:%M} "
+                    f"({len((r.parameters_json or {}).get('query_ids', []))} queries)"
+                    for r in all_runs if r.id == rid
+                ),
+                key="pilot_add_target",
+            )
+            target_run = crud.get_pilot_search_run(db, target_run_id)
+            settings = search_runs.settings_for_run(target_run)
+            st.caption(
+                f"This run's settings: {settings.results_per_query} results per query, "
+                f"order={settings.search_order}, publication period: "
+                f"{format_publication_period_label(settings.publication_filter_type, settings.published_after, settings.published_before)}."
+            )
+            done_ids = search_runs.succeeded_query_ids(db, target_run)
+            available = [q.id for q in active_queries if q.id not in done_ids]
+            select_key = f"pilot_add_selection_{target_run.id}"
+            _sanitise_selection(select_key, available, available)
+            if not available:
+                st.info("Every active query already has results in this run.")
+            selected_ids = st.multiselect(
+                "Queries to add",
+                options=available,
+                format_func=lambda qid: query_text[qid],
+                key=select_key,
+            )
+            pub_errors: list[str] = []
+            run_notes = None
+        else:
+            all_ids = list(query_text)
+            select_key = "pilot_new_selection"
+            _sanitise_selection(select_key, all_ids, all_ids)
+            selected_ids = st.multiselect(
+                "Queries to include",
+                options=all_ids,
+                format_func=lambda qid: query_text[qid],
+                key=select_key,
+            )
+            col1, col2 = st.columns(2)
+            results_per_query = col1.selectbox(
+                "Results per query",
+                PILOT_RESULT_COUNT_OPTIONS,
+                index=PILOT_RESULT_COUNT_OPTIONS.index(10)
+                if 10 in PILOT_RESULT_COUNT_OPTIONS
+                else 0,
+            )
+            search_order = col2.selectbox(
+                "Search order", SEARCH_ORDER_OPTIONS, index=SEARCH_ORDER_OPTIONS.index("relevance")
+            )
 
-        run_notes = st.text_input("Notes for this pilot run (optional)")
+            st.markdown("**Publication period**")
+            pub_filter_type = st.selectbox(
+                "Publication period",
+                PUBLICATION_PERIOD_OPTIONS,
+                index=PUBLICATION_PERIOD_OPTIONS.index(current_study.publication_filter_type)
+                if current_study.publication_filter_type in PUBLICATION_PERIOD_OPTIONS
+                else 0,
+                format_func=lambda code: PUBLICATION_PERIOD_LABELS[code],
+                label_visibility="collapsed",
+            )
+            pub_after = pub_before = None
+            if pub_filter_type == PUBLICATION_FILTER_AFTER:
+                pub_after = st.date_input("Published after", value=current_study.published_after)
+            elif pub_filter_type == PUBLICATION_FILTER_BEFORE:
+                pub_before = st.date_input("Published before", value=current_study.published_before)
+            elif pub_filter_type == PUBLICATION_FILTER_BETWEEN:
+                date_col1, date_col2 = st.columns(2)
+                pub_after = date_col1.date_input("From", value=current_study.published_after)
+                pub_before = date_col2.date_input("To", value=current_study.published_before)
 
-        est_calls = estimate_search_calls(len(selected_ids), int(results_per_query))
-        st.caption(
-            f"Estimated API usage: ~{est_calls} search call(s) of the project's "
-            "~100 per day (shared by everyone using the app)."
-        )
+            pub_errors = validate_publication_date_filter(pub_filter_type, pub_after, pub_before)
+            for e in pub_errors:
+                st.error(e)
+            st.caption(
+                f"Publication period: {format_publication_period_label(pub_filter_type, pub_after, pub_before)}. "
+                "This filters which videos are found; it does not change the sort order above."
+            )
+            settings = search_runs.SearchSettings(
+                results_per_query=int(results_per_query),
+                search_order=search_order,
+                publication_filter_type=pub_filter_type,
+                published_after=pub_after,
+                published_before=pub_before,
+            )
 
-        if st.button(
-            "Run pilot search", type="primary", disabled=not selected_ids or bool(pub_errors)
-        ):
+            run_notes = st.text_input("Notes for this pilot run (optional)")
+
+        est_calls = estimate_search_calls(len(selected_ids), settings.results_per_query)
+        st.caption(f"This run needs ~{est_calls} search(es).")
+        render_shortfall_warning(est_calls, quota)
+        if not pub_errors:
+            render_repeat_warning(
+                search_runs.find_repeats(db, study_id, search_runs.PILOT, selected_ids, settings),
+                query_text, select_key, "today",
+            )
+
+        button_label = "Add to run" if target_run else "Run pilot search"
+        if st.button(button_label, type="primary", disabled=not selected_ids or bool(pub_errors)):
             # A pilot run holds its database connection for the whole search
             # (one YouTube API call per query). Streamlit cannot interrupt a
             # script that is blocked on the network, so clicking again starts a
@@ -132,32 +205,36 @@ with st.expander("Run a new pilot search", expanded=not all_runs):
 
             st.session_state[_PILOT_RUN_IN_PROGRESS] = True
             queries_to_run = [q for q in active_queries if q.id in selected_ids]
+            reviewer_id = current_reviewer.id if current_reviewer else None
             try:
-                with st.spinner(
-                    f"Running pilot search across {len(queries_to_run)} quer(y/ies)..."
-                ):
-                    outcome = pilot_service.run_pilot_search(
-                        db,
-                        study_id=study_id,
-                        queries=queries_to_run,
-                        results_per_query=results_per_query,
-                        search_order=search_order,
-                        reviewer_id=current_reviewer.id if current_reviewer else None,
-                        notes=run_notes or None,
-                        publication_filter_type=pub_filter_type,
-                        published_after=pub_after,
-                        published_before=pub_before,
-                    )
-                if current_study.search_status == "Draft":
-                    crud.update_study(db, study_id, search_status="Pilot testing")
-                # Keep the study's date filter in sync with whatever was just piloted,
-                # so "Approve search strategy" below reflects what was actually tested.
-                crud.update_study(
-                    db, study_id,
-                    publication_filter_type=pub_filter_type,
-                    published_after=pub_after,
-                    published_before=pub_before,
-                )
+                with st.spinner(f"Searching {len(queries_to_run)} quer(y/ies)..."):
+                    if target_run is not None:
+                        outcome = pilot_service.add_queries_to_pilot_run(
+                            db, target_run.id, queries_to_run, reviewer_id=reviewer_id
+                        )
+                    else:
+                        outcome = pilot_service.run_pilot_search(
+                            db,
+                            study_id=study_id,
+                            queries=queries_to_run,
+                            results_per_query=settings.results_per_query,
+                            search_order=settings.search_order,
+                            reviewer_id=reviewer_id,
+                            notes=run_notes or None,
+                            publication_filter_type=settings.publication_filter_type,
+                            published_after=settings.published_after,
+                            published_before=settings.published_before,
+                        )
+                        if current_study.search_status == "Draft":
+                            crud.update_study(db, study_id, search_status="Pilot testing")
+                        # Keep the study's date filter in sync with whatever was just piloted,
+                        # so "Approve search strategy" below reflects what was actually tested.
+                        crud.update_study(
+                            db, study_id,
+                            publication_filter_type=settings.publication_filter_type,
+                            published_after=settings.published_after,
+                            published_before=settings.published_before,
+                        )
                 st.session_state["pilot_run_id"] = outcome.run_id
             finally:
                 # Always clear, including when the run raises or Streamlit
@@ -170,7 +247,7 @@ with st.expander("Run a new pilot search", expanded=not all_runs):
                     f"quer(y/ies) failed:\n\n" + "\n".join(f"- {e}" for e in outcome.errors)
                 )
             else:
-                st.success(f"Pilot run complete: {outcome.results_saved} results saved.")
+                st.success(f"Search complete: {outcome.results_saved} results saved.")
             close_and_rerun(db)
 
 st.markdown("---")

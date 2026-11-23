@@ -13,16 +13,9 @@ from sqlalchemy.orm import Session
 
 from db import crud
 from db.models import SearchQuery, utcnow
-from services import youtube_api
+from services import search_runs, youtube_api  # noqa: F401 - youtube_api patched in tests
 from services.deduplication import DeduplicationOutcome, deduplicate_and_enrich
-from utils.constants import (
-    PUBLICATION_FILTER_ALL_TIME,
-    RUN_STATUS_COMPLETED,
-    RUN_STATUS_FAILED,
-    RUN_STATUS_PARTIAL,
-    RUN_STATUS_RUNNING,
-)
-from utils.helpers import publication_date_api_params
+from utils.constants import PUBLICATION_FILTER_ALL_TIME, RUN_STATUS_RUNNING
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -66,8 +59,6 @@ def run_full_search(
     pilot_service.run_pilot_search: a crash or restart partway through
     shouldn't lose the queries that already succeeded.
     """
-    date_params = publication_date_api_params(publication_filter_type, published_after, published_before)
-
     run = crud.create_full_search_run(
         db,
         study_id=study_id,
@@ -87,31 +78,7 @@ def run_full_search(
         notes=notes,
     )
 
-    errors: list[str] = []
-    quota_failed: list[str] = []
-    saved = 0
-    for query in queries:
-        try:
-            items = youtube_api.search_videos(
-                query.query_text,
-                max_results=results_per_query,
-                order=search_order,
-                region_code=region_code,
-                relevance_language=relevance_language,
-                **date_params,
-            )
-        except youtube_api.YouTubeQuotaExceededError:
-            # Keep going: past the limit Google still lets some calls through,
-            # and a failed call costs nothing. Reported as one line below.
-            logger.warning("Query '%s': YouTube search quota exceeded.", query.query_text)
-            quota_failed.append(query.query_text)
-            continue
-        except youtube_api.YouTubeAPIError as exc:
-            msg = f"Query '{query.query_text}': {exc}"
-            logger.warning(msg)
-            errors.append(msg)
-            continue
-
+    def save(query: SearchQuery, items) -> None:
         for item in items:
             crud.add_search_result_raw(
                 db,
@@ -126,25 +93,11 @@ def run_full_search(
                 video_url=item.video_url,
                 raw_json=item.raw,
             )
-            saved += 1
-        db.commit()  # persist this query's raw results now, not at the end of the whole run
 
-    queries_failed = len(errors) + len(quota_failed)
-    if quota_failed:
-        errors.append(youtube_api.summarise_quota_failures(quota_failed))
-
-    if not errors:
-        final_status = RUN_STATUS_COMPLETED
-    elif saved > 0:
-        final_status = RUN_STATUS_PARTIAL
-    else:
-        final_status = RUN_STATUS_FAILED
-    crud.update_full_search_run(
-        db, run.id,
-        status=final_status,
-        completed_at=utcnow(),
-        error_message="; ".join(errors) if errors else None,
-    )
+    batch = search_runs.execute_queries(db, queries, search_runs.settings_for_run(run), save)
+    search_runs.record_batch(db, run, batch, run_has_results=batch.saved > 0)
+    saved = batch.saved
+    errors = batch.error_lines()
 
     dedup_outcome = deduplicate_and_enrich(db, study_id)
     if saved > 0:
@@ -156,5 +109,5 @@ def run_full_search(
         raw_results_saved=saved,
         errors=errors,
         dedup=dedup_outcome,
-        queries_failed=queries_failed,
+        queries_failed=batch.queries_failed,
     )

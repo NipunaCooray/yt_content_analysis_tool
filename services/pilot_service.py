@@ -9,19 +9,14 @@ import datetime
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db import crud
 from db.models import PilotSearchResult, SearchQuery, utcnow
-from services import youtube_api
-from utils.constants import (
-    PUBLICATION_FILTER_ALL_TIME,
-    RUN_STATUS_COMPLETED,
-    RUN_STATUS_FAILED,
-    RUN_STATUS_PARTIAL,
-    RUN_STATUS_RUNNING,
-)
-from utils.helpers import publication_date_api_params, safe_percentage
+from services import search_runs, youtube_api  # noqa: F401 - youtube_api patched in tests
+from utils.constants import PUBLICATION_FILTER_ALL_TIME, RUN_STATUS_RUNNING
+from utils.helpers import safe_percentage
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -67,8 +62,6 @@ def run_pilot_search(
     did) -- durable in the database even if the process dies before this
     function returns.
     """
-    date_params = publication_date_api_params(publication_filter_type, published_after, published_before)
-
     run = crud.create_pilot_search_run(
         db,
         study_id=study_id,
@@ -87,32 +80,41 @@ def run_pilot_search(
             "published_before": published_before.isoformat() if published_before else None,
         },
     )
+    return _execute_into_run(db, run, queries)
 
-    errors: list[str] = []
-    quota_failed: list[str] = []
-    saved = 0
-    for query in queries:
-        try:
-            items = youtube_api.search_videos(
-                query.query_text,
-                max_results=results_per_query,
-                order=search_order,
-                region_code=region_code,
-                relevance_language=relevance_language,
-                **date_params,
-            )
-        except youtube_api.YouTubeQuotaExceededError:
-            # Keep going: past the limit Google still lets some calls through,
-            # and a failed call costs nothing. Reported as one line below.
-            logger.warning("Query '%s': YouTube search quota exceeded.", query.query_text)
-            quota_failed.append(query.query_text)
-            continue
-        except youtube_api.YouTubeAPIError as exc:
-            msg = f"Query '{query.query_text}': {exc}"
-            logger.warning(msg)
-            errors.append(msg)
-            continue
 
+def add_queries_to_pilot_run(
+    db: Session,
+    run_id: int,
+    queries: list[SearchQuery],
+    reviewer_id: int | None,
+) -> PilotRunOutcome:
+    """Search more queries into an existing pilot run, using that run's own
+    settings, so its performance table, diagnostics and review cover them
+    together with the queries already there -- without re-searching those.
+
+    Queries that already succeeded in the run are skipped; ones that failed
+    there (e.g. on quota) are retried.
+    """
+    run = crud.get_pilot_search_run(db, run_id)
+    if run is None:
+        raise ValueError(f"Pilot run {run_id} not found")
+    done = search_runs.succeeded_query_ids(db, run)
+    to_run = [q for q in queries if q.id not in done]
+
+    crud.log_audit_event(
+        db, "pilot_run_extended", "pilot_search_run", run.id,
+        study_id=run.study_id, reviewer_id=reviewer_id,
+        details={"query_ids": [q.id for q in to_run]},
+    )
+    if not to_run:
+        return PilotRunOutcome(run_id=run.id, queries_run=0, results_saved=0, errors=[])
+    crud.update_pilot_search_run(db, run.id, status=RUN_STATUS_RUNNING)
+    return _execute_into_run(db, run, to_run)
+
+
+def _execute_into_run(db: Session, run, queries: list[SearchQuery]) -> PilotRunOutcome:
+    def save(query: SearchQuery, items) -> None:
         for item in items:
             crud.add_pilot_search_result(
                 db,
@@ -129,29 +131,16 @@ def run_pilot_search(
                 relevance_rating="Not yet reviewed",
                 raw_json=item.raw,
             )
-            saved += 1
-        db.commit()  # persist this query's results now, not at the end of the whole run
 
-    queries_failed = len(errors) + len(quota_failed)
-    if quota_failed:
-        errors.append(youtube_api.summarise_quota_failures(quota_failed))
-
-    if not errors:
-        final_status = RUN_STATUS_COMPLETED
-    elif saved > 0:
-        final_status = RUN_STATUS_PARTIAL
-    else:
-        final_status = RUN_STATUS_FAILED
-    crud.update_pilot_search_run(
-        db, run.id,
-        status=final_status,
-        completed_at=utcnow(),
-        error_message="; ".join(errors) if errors else None,
-    )
+    batch = search_runs.execute_queries(db, queries, search_runs.settings_for_run(run), save)
+    has_results = db.execute(
+        select(PilotSearchResult.id).where(PilotSearchResult.pilot_search_run_id == run.id).limit(1)
+    ).first() is not None
+    search_runs.record_batch(db, run, batch, run_has_results=has_results)
 
     return PilotRunOutcome(
-        run_id=run.id, queries_run=len(queries), results_saved=saved,
-        errors=errors, queries_failed=queries_failed,
+        run_id=run.id, queries_run=len(queries), results_saved=batch.saved,
+        errors=batch.error_lines(), queries_failed=batch.queries_failed,
     )
 
 
